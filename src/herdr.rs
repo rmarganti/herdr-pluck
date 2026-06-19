@@ -78,8 +78,6 @@ impl HerdrAdapter {
                 "picker",
                 "--placement",
                 "overlay",
-                "--target-pane",
-                &target.0,
                 "--env",
                 &format!("{HERDR_PLUCK_TARGET_PANE_ID}={}", target.0),
             ])
