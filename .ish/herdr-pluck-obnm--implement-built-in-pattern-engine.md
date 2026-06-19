@@ -38,8 +38,8 @@ Built-in v1 patterns are hardcoded. User-defined regex configuration is out of s
 
 
 ## Reference Code
-Use tmux-fingers as behavioral prior art, not as a requirement to clone every feature:
+Use tmux-fingers as behavioral prior art, not as a requirement to clone every feature. Online repo: https://github.com/Morantron/tmux-fingers
 
-- Capture/start flow and joined wrapped-line behavior: `/Users/rmarganti/.cache/checkouts/github.com/Morantron/tmux-fingers/src/fingers/commands/start.cr`
-- tmux capture/copy helper behavior: `/Users/rmarganti/.cache/checkouts/github.com/Morantron/tmux-fingers/src/tmux.cr`
-- Matching, named `match` capture, duplicate hint reuse, and skip-shorter-than-hint behavior: `/Users/rmarganti/.cache/checkouts/github.com/Morantron/tmux-fingers/src/fingers/hinter.cr`
+- Capture/start flow and joined wrapped-line behavior: [`src/fingers/commands/start.cr`](https://github.com/Morantron/tmux-fingers/blob/master/src/fingers/commands/start.cr)
+- tmux capture/copy helper behavior: [`src/tmux.cr`](https://github.com/Morantron/tmux-fingers/blob/master/src/tmux.cr)
+- Matching, named `match` capture, duplicate hint reuse, and skip-shorter-than-hint behavior: [`src/fingers/hinter.cr`](https://github.com/Morantron/tmux-fingers/blob/master/src/fingers/hinter.cr)

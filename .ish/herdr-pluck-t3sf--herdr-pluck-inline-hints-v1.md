@@ -31,20 +31,20 @@ No external ish prerequisites. Child ishes and explicit `blocked_by` relationshi
 
 
 ## Reference Repositories
-Remote reference code has been cached locally with the librarian workflow. Future agents should prefer these local paths for research and grep/read operations:
+Use the online repositories as the stable source for reference code and documentation:
 
-- Herdr: `https://github.com/ogulcancelik/herdr` cached at `/Users/rmarganti/.cache/checkouts/github.com/ogulcancelik/herdr`
-- tmux-fingers: `https://github.com/Morantron/tmux-fingers` cached at `/Users/rmarganti/.cache/checkouts/github.com/Morantron/tmux-fingers`
+- Herdr: https://github.com/ogulcancelik/herdr
+- tmux-fingers: https://github.com/Morantron/tmux-fingers
 
 Important PRD reference files to inspect before implementation details:
 
-- Herdr plugin authoring: `/Users/rmarganti/.cache/checkouts/github.com/ogulcancelik/herdr/website/src/content/docs/plugins.mdx`
-- Herdr CLI reference: `/Users/rmarganti/.cache/checkouts/github.com/ogulcancelik/herdr/website/src/content/docs/cli-reference.mdx`
-- Herdr socket/API overview: `/Users/rmarganti/.cache/checkouts/github.com/ogulcancelik/herdr/website/src/content/docs/socket-api.mdx`
-- Herdr config/keybindings: `/Users/rmarganti/.cache/checkouts/github.com/ogulcancelik/herdr/website/src/content/docs/configuration.mdx`
-- Herdr pane schema/layout: `/Users/rmarganti/.cache/checkouts/github.com/ogulcancelik/herdr/src/api/schema/panes.rs`
-- Herdr terminal read behavior: `/Users/rmarganti/.cache/checkouts/github.com/ogulcancelik/herdr/src/pane/terminal.rs`
-- tmux-fingers capture flow: `/Users/rmarganti/.cache/checkouts/github.com/Morantron/tmux-fingers/src/fingers/commands/start.cr` and `/Users/rmarganti/.cache/checkouts/github.com/Morantron/tmux-fingers/src/tmux.cr`
-- tmux-fingers matching/hinting: `/Users/rmarganti/.cache/checkouts/github.com/Morantron/tmux-fingers/src/fingers/hinter.cr`
-- tmux-fingers destructive rendering: `/Users/rmarganti/.cache/checkouts/github.com/Morantron/tmux-fingers/src/fingers/match_formatter.cr`
-- tmux-fingers clipboard behavior: `/Users/rmarganti/.cache/checkouts/github.com/Morantron/tmux-fingers/src/fingers/action_runner.cr` and `/Users/rmarganti/.cache/checkouts/github.com/Morantron/tmux-fingers/src/tmux.cr`
+- Herdr plugin authoring: [`website/src/content/docs/plugins.mdx`](https://github.com/ogulcancelik/herdr/blob/main/website/src/content/docs/plugins.mdx)
+- Herdr CLI reference: [`website/src/content/docs/cli-reference.mdx`](https://github.com/ogulcancelik/herdr/blob/main/website/src/content/docs/cli-reference.mdx)
+- Herdr socket/API overview: [`website/src/content/docs/socket-api.mdx`](https://github.com/ogulcancelik/herdr/blob/main/website/src/content/docs/socket-api.mdx)
+- Herdr config/keybindings: [`website/src/content/docs/configuration.mdx`](https://github.com/ogulcancelik/herdr/blob/main/website/src/content/docs/configuration.mdx)
+- Herdr pane schema/layout: [`src/api/schema/panes.rs`](https://github.com/ogulcancelik/herdr/blob/main/src/api/schema/panes.rs)
+- Herdr terminal read behavior: [`src/pane/terminal.rs`](https://github.com/ogulcancelik/herdr/blob/main/src/pane/terminal.rs)
+- tmux-fingers capture flow: [`src/fingers/commands/start.cr`](https://github.com/Morantron/tmux-fingers/blob/master/src/fingers/commands/start.cr) and [`src/tmux.cr`](https://github.com/Morantron/tmux-fingers/blob/master/src/tmux.cr)
+- tmux-fingers matching/hinting: [`src/fingers/hinter.cr`](https://github.com/Morantron/tmux-fingers/blob/master/src/fingers/hinter.cr)
+- tmux-fingers destructive rendering: [`src/fingers/match_formatter.cr`](https://github.com/Morantron/tmux-fingers/blob/master/src/fingers/match_formatter.cr)
+- tmux-fingers clipboard behavior: [`src/fingers/action_runner.cr`](https://github.com/Morantron/tmux-fingers/blob/master/src/fingers/action_runner.cr) and [`src/tmux.cr`](https://github.com/Morantron/tmux-fingers/blob/master/src/tmux.cr)

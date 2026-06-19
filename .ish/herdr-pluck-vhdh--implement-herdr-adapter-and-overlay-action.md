@@ -39,11 +39,11 @@ Use Herdr's documented plugin/CLI/socket APIs, not private internals. Relevant P
 
 
 ## Reference Code
-Use the cached Herdr checkout as the source for exact plugin/CLI/API behavior:
+Use the online Herdr repository as the source for exact plugin/CLI/API behavior: https://github.com/ogulcancelik/herdr
 
-- Plugin model/manifest/action/overlay docs: `/Users/rmarganti/.cache/checkouts/github.com/ogulcancelik/herdr/website/src/content/docs/plugins.mdx`
-- CLI commands including `pane read` and `plugin pane open`: `/Users/rmarganti/.cache/checkouts/github.com/ogulcancelik/herdr/website/src/content/docs/cli-reference.mdx`
-- Socket/API overview including pane APIs: `/Users/rmarganti/.cache/checkouts/github.com/ogulcancelik/herdr/website/src/content/docs/socket-api.mdx`
-- Keybinding `plugin_action` docs: `/Users/rmarganti/.cache/checkouts/github.com/ogulcancelik/herdr/website/src/content/docs/configuration.mdx`
-- Pane layout schema: `/Users/rmarganti/.cache/checkouts/github.com/ogulcancelik/herdr/src/api/schema/panes.rs`
-- Terminal read implementation and `recent_unwrapped` behavior: `/Users/rmarganti/.cache/checkouts/github.com/ogulcancelik/herdr/src/pane/terminal.rs`
+- Plugin model/manifest/action/overlay docs: [`website/src/content/docs/plugins.mdx`](https://github.com/ogulcancelik/herdr/blob/main/website/src/content/docs/plugins.mdx)
+- CLI commands including `pane read` and `plugin pane open`: [`website/src/content/docs/cli-reference.mdx`](https://github.com/ogulcancelik/herdr/blob/main/website/src/content/docs/cli-reference.mdx)
+- Socket/API overview including pane APIs: [`website/src/content/docs/socket-api.mdx`](https://github.com/ogulcancelik/herdr/blob/main/website/src/content/docs/socket-api.mdx)
+- Keybinding `plugin_action` docs: [`website/src/content/docs/configuration.mdx`](https://github.com/ogulcancelik/herdr/blob/main/website/src/content/docs/configuration.mdx)
+- Pane layout schema: [`src/api/schema/panes.rs`](https://github.com/ogulcancelik/herdr/blob/main/src/api/schema/panes.rs)
+- Terminal read implementation and `recent_unwrapped` behavior: [`src/pane/terminal.rs`](https://github.com/ogulcancelik/herdr/blob/main/src/pane/terminal.rs)

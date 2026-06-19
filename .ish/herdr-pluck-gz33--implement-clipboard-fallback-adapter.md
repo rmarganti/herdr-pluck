@@ -36,7 +36,7 @@ Target fallback coverage from the PRD: macOS `pbcopy`; Linux Wayland tools such 
 
 
 ## Reference Code
-Use tmux-fingers clipboard behavior as prior art for shelling out to available platform tools, while implementing Herdr Pluck's isolated/testable Rust adapter:
+Use tmux-fingers clipboard behavior as prior art for shelling out to available platform tools, while implementing Herdr Pluck's isolated/testable Rust adapter. Online repo: https://github.com/Morantron/tmux-fingers
 
-- `/Users/rmarganti/.cache/checkouts/github.com/Morantron/tmux-fingers/src/fingers/action_runner.cr`
-- `/Users/rmarganti/.cache/checkouts/github.com/Morantron/tmux-fingers/src/tmux.cr`
+- [`src/fingers/action_runner.cr`](https://github.com/Morantron/tmux-fingers/blob/master/src/fingers/action_runner.cr)
+- [`src/tmux.cr`](https://github.com/Morantron/tmux-fingers/blob/master/src/tmux.cr)

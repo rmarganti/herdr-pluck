@@ -38,8 +38,8 @@ This task should not add deferred scope such as OSC52, custom regex configuratio
 
 
 ## Reference Code
-When finalizing docs and install instructions, verify the current Herdr plugin/keybinding shape against:
+When finalizing docs and install instructions, verify the current Herdr plugin/keybinding shape against the online Herdr repository: https://github.com/ogulcancelik/herdr
 
-- `/Users/rmarganti/.cache/checkouts/github.com/ogulcancelik/herdr/website/src/content/docs/plugins.mdx`
-- `/Users/rmarganti/.cache/checkouts/github.com/ogulcancelik/herdr/website/src/content/docs/configuration.mdx`
-- `/Users/rmarganti/.cache/checkouts/github.com/ogulcancelik/herdr/website/src/content/docs/cli-reference.mdx`
+- [`website/src/content/docs/plugins.mdx`](https://github.com/ogulcancelik/herdr/blob/main/website/src/content/docs/plugins.mdx)
+- [`website/src/content/docs/configuration.mdx`](https://github.com/ogulcancelik/herdr/blob/main/website/src/content/docs/configuration.mdx)
+- [`website/src/content/docs/cli-reference.mdx`](https://github.com/ogulcancelik/herdr/blob/main/website/src/content/docs/cli-reference.mdx)

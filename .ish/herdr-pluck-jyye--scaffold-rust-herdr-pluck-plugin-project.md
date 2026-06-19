@@ -35,11 +35,11 @@ None. This is the foundation for implementation work.
 
 
 ## Reference Code
-Before choosing project shape and manifest/action assumptions, inspect Herdr's plugin and CLI docs in the cached reference checkout:
+Before choosing project shape and manifest/action assumptions, inspect Herdr's plugin and CLI docs in the online Herdr repository: https://github.com/ogulcancelik/herdr
 
-- `/Users/rmarganti/.cache/checkouts/github.com/ogulcancelik/herdr/website/src/content/docs/plugins.mdx`
-- `/Users/rmarganti/.cache/checkouts/github.com/ogulcancelik/herdr/website/src/content/docs/cli-reference.mdx`
-- `/Users/rmarganti/.cache/checkouts/github.com/ogulcancelik/herdr/website/src/content/docs/configuration.mdx`
+- [`website/src/content/docs/plugins.mdx`](https://github.com/ogulcancelik/herdr/blob/main/website/src/content/docs/plugins.mdx)
+- [`website/src/content/docs/cli-reference.mdx`](https://github.com/ogulcancelik/herdr/blob/main/website/src/content/docs/cli-reference.mdx)
+- [`website/src/content/docs/configuration.mdx`](https://github.com/ogulcancelik/herdr/blob/main/website/src/content/docs/configuration.mdx)
 
 
 

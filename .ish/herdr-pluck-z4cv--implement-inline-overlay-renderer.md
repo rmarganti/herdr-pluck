@@ -38,7 +38,7 @@ Rendering must preserve geometry: hints destructively replace the beginning of t
 
 
 ## Reference Code
-Use tmux-fingers destructive inline rendering as prior art:
+Use tmux-fingers destructive inline rendering as prior art. Online repo: https://github.com/Morantron/tmux-fingers
 
-- `/Users/rmarganti/.cache/checkouts/github.com/Morantron/tmux-fingers/src/fingers/match_formatter.cr`
-- Related hint/match data behavior: `/Users/rmarganti/.cache/checkouts/github.com/Morantron/tmux-fingers/src/fingers/hinter.cr`
+- [`src/fingers/match_formatter.cr`](https://github.com/Morantron/tmux-fingers/blob/master/src/fingers/match_formatter.cr)
+- Related hint/match data behavior: [`src/fingers/hinter.cr`](https://github.com/Morantron/tmux-fingers/blob/master/src/fingers/hinter.cr)
