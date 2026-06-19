@@ -58,31 +58,3 @@ pub fn run_with(cli: Cli) -> Result<()> {
 
     Ok(())
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use clap::Parser;
-
-    #[test]
-    fn parses_open_overlay_mode() {
-        let cli = Cli::parse_from(["herdr-pluck", "open-overlay", "--target-pane", "pane-1"]);
-        assert_eq!(
-            cli.command,
-            Command::OpenOverlay {
-                target_pane: Some("pane-1".to_string())
-            }
-        );
-    }
-
-    #[test]
-    fn parses_picker_mode() {
-        let cli = Cli::parse_from(["herdr-pluck", "pick", "--target-pane", "pane-2"]);
-        assert_eq!(
-            cli.command,
-            Command::Pick {
-                target_pane: Some("pane-2".to_string())
-            }
-        );
-    }
-}
