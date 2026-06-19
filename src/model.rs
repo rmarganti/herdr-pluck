@@ -15,6 +15,78 @@ pub struct PaneDimensions {
     pub height: u16,
 }
 
+/// Cell-space rectangle from Herdr layout or overlay rendering coordinates.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Rect {
+    pub x: u16,
+    pub y: u16,
+    pub width: u16,
+    pub height: u16,
+}
+
+impl Rect {
+    pub fn new(x: u16, y: u16, width: u16, height: u16) -> Self {
+        Self {
+            x,
+            y,
+            width,
+            height,
+        }
+    }
+
+    /// Returns this rect after removing an equal border on all sides.
+    pub fn inset(self, amount: u16) -> Self {
+        let doubled = amount.saturating_mul(2);
+        Self {
+            x: self.x.saturating_add(amount),
+            y: self.y.saturating_add(amount),
+            width: self.width.saturating_sub(doubled),
+            height: self.height.saturating_sub(doubled),
+        }
+    }
+
+    /// Returns this rect with columns reserved from the right edge.
+    pub fn reserve_right_gutter(self, amount: u16) -> Self {
+        Self {
+            width: self.width.saturating_sub(amount.min(self.width)),
+            ..self
+        }
+    }
+
+    /// Converts this rect from an absolute coordinate space to one relative to `origin`.
+    pub fn relative_to(self, origin: Rect) -> Self {
+        Self {
+            x: self.x.saturating_sub(origin.x),
+            y: self.y.saturating_sub(origin.y),
+            ..self
+        }
+    }
+}
+
+/// Frozen pre-overlay source-pane geometry derived from Herdr-global layout coordinates.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SourceGeometrySnapshot {
+    pub target_pane_id: PaneId,
+    pub terminal_area: Rect,
+    pub source_outer_rect: Rect,
+    pub source_content_rect: Rect,
+    pub pane_count: usize,
+    pub zoomed: bool,
+    pub target_focused: bool,
+}
+
+impl SourceGeometrySnapshot {
+    /// Source content rect relative to Herdr's terminal area, excluding sidebar/tab-bar offsets.
+    pub fn source_content_rect_in_terminal(&self) -> Rect {
+        self.source_content_rect.relative_to(self.terminal_area)
+    }
+
+    /// Source outer rect relative to Herdr's terminal area, excluding sidebar/tab-bar offsets.
+    pub fn source_outer_rect_in_terminal(&self) -> Rect {
+        self.source_outer_rect.relative_to(self.terminal_area)
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PaneText {
     pub lines: Vec<String>,

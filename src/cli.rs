@@ -1,4 +1,4 @@
-use crate::herdr::{HerdrAdapter, HERDR_PLUCK_TARGET_PANE_ID};
+use crate::herdr::{HerdrAdapter, HERDR_PLUCK_SOURCE_GEOMETRY_JSON, HERDR_PLUCK_TARGET_PANE_ID};
 use crate::model::PaneId;
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
@@ -28,6 +28,10 @@ pub enum Command {
         /// Override the pane to pluck from. Defaults to HERDR_PLUCK_TARGET_PANE_ID.
         #[arg(long, env = HERDR_PLUCK_TARGET_PANE_ID)]
         target_pane: Option<String>,
+
+        /// Frozen pre-overlay source geometry JSON. Defaults to HERDR_PLUCK_SOURCE_GEOMETRY_JSON.
+        #[arg(long, env = HERDR_PLUCK_SOURCE_GEOMETRY_JSON)]
+        source_geometry_json: Option<String>,
     },
 }
 
@@ -45,14 +49,23 @@ pub fn run_with(cli: Cli) -> Result<()> {
                 .or_else(|| adapter.target_pane_from_context())
                 .context("could not determine target pane from --target-pane, HERDR_PANE_ID, HERDR_ACTIVE_PANE_ID, or Herdr context")?;
 
-            adapter.open_picker_overlay(&target)?;
+            let geometry = adapter.capture_source_geometry(&target)?;
+            adapter.open_picker_overlay(&target, &geometry)?;
         }
-        Command::Pick { target_pane } => {
+
+        Command::Pick {
+            target_pane,
+            source_geometry_json,
+        } => {
             let target = target_pane
                 .map(PaneId::new)
                 .context("picker requires --target-pane or HERDR_PLUCK_TARGET_PANE_ID")?;
+            let geometry = source_geometry_json
+                .as_deref()
+                .map(crate::herdr::deserialize_source_geometry)
+                .transpose()?;
 
-            adapter.run_picker_placeholder(&target)?;
+            adapter.run_picker_placeholder(&target, geometry.as_ref())?;
         }
     }
 
