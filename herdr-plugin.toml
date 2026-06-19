@@ -1,0 +1,21 @@
+id = "rmarganti.herdr-pluck"
+name = "Herdr Pluck"
+version = "0.1.0"
+min_herdr_version = "0.7.0"
+description = "Inline keyboard hints for copying visible terminal tokens from Herdr panes"
+platforms = ["linux", "macos"]
+
+[[build]]
+command = ["cargo", "build", "--release"]
+
+[[actions]]
+id = "pluck"
+title = "Pluck visible token"
+contexts = ["pane", "workspace"]
+command = ["./target/release/herdr-pluck", "open-overlay"]
+
+[[panes]]
+id = "picker"
+title = "Pluck"
+placement = "overlay"
+command = ["./target/release/herdr-pluck", "pick"]
