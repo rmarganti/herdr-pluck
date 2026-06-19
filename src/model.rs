@@ -87,6 +87,7 @@ impl SourceGeometrySnapshot {
     }
 }
 
+/// Unwrapped logical pane text lines and dimensions at the time of picker activation.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PaneText {
     pub lines: Vec<String>,
@@ -132,17 +133,20 @@ pub struct HintAssignment {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum RenderStyle {
-    Dim,
+    Unmatched,
     Match,
     Hint,
 }
 
+/// A contiguous span of text to render in the picker, with a single style.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RenderSpan {
     pub text: String,
     pub style: RenderStyle,
 }
 
+/// A single line of text to render in the picker,
+/// with style spans for matched/highlighted regions.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RenderLine {
     pub spans: Vec<RenderSpan>,
