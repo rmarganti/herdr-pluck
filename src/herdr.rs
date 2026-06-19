@@ -125,6 +125,8 @@ impl Drop for RawModeGuard {
     }
 }
 
+/// Traverses the given JSON value for each of the provided paths,
+/// returning the first string found at any of those paths.
 fn find_string_at_paths(value: &Value, paths: &[&[&str]]) -> Option<String> {
     for path in paths {
         let mut cursor = value;

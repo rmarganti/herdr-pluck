@@ -31,12 +31,15 @@ pub fn built_in_patterns() -> Result<Vec<PatternDefinition>, regex::Error> {
             30,
             r#"\b[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\b"#,
         )?,
+        //
         PatternDefinition::new("git-sha", 40, r#"\b[0-9a-fA-F]{7,40}\b"#)?,
         PatternDefinition::new("ipv4", 50, r#"\b(?:\d{1,3}\.){3}\d{1,3}\b"#)?,
         PatternDefinition::new("number", 60, r#"\b\d{4,}\b"#)?,
     ])
 }
 
+/// Finds matches in the given lines based on the provided patterns. Each match is represented as a `MatchSpan`
+/// containing the line index, start and end positions, matched text, pattern name, and pattern priority.
 pub fn find_raw_matches(lines: &[String], patterns: &[PatternDefinition]) -> Vec<MatchSpan> {
     let mut spans = Vec::new();
     for (line_idx, line) in lines.iter().enumerate() {

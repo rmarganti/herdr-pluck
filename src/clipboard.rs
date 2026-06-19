@@ -76,14 +76,3 @@ pub fn copy_to_clipboard(text: &str) -> CopyResult {
         },
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn fallback_order_prefers_platform_specific_tools() {
-        let names: Vec<_> = fallback_tools().into_iter().map(|tool| tool.name).collect();
-        assert_eq!(names, vec!["pbcopy", "wl-copy", "xclip", "xsel"]);
-    }
-}

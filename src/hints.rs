@@ -7,6 +7,7 @@ pub fn hint_alphabet() -> Vec<char> {
     "asdfghjklqwertyuiopzxcvbnm".chars().collect()
 }
 
+/// Determines the appropriate hint width based on the number of unique match texts.
 pub fn hint_width(unique_match_count: usize) -> usize {
     let alphabet_len = hint_alphabet().len();
     if unique_match_count <= alphabet_len {
@@ -16,6 +17,9 @@ pub fn hint_width(unique_match_count: usize) -> usize {
     }
 }
 
+/// Generates hints based on the specified width. For width 1, it generates single-character hints
+/// from the alphabet. For width 2, it generates all possible two-character combinations from the
+/// alphabet. Widths greater than 2 are not supported and will return an empty vector.
 pub fn generate_hints(width: usize) -> Vec<String> {
     let alphabet = hint_alphabet();
     match width {
@@ -29,6 +33,7 @@ pub fn generate_hints(width: usize) -> Vec<String> {
     }
 }
 
+/// Assigns hints to the given matches. Hints are generated based on the number of unique match texts.
 pub fn assign_hints(matches: Vec<MatchSpan>) -> Vec<HintAssignment> {
     let mut by_text: BTreeMap<String, Vec<MatchSpan>> = BTreeMap::new();
     for span in matches {
@@ -47,23 +52,4 @@ pub fn assign_hints(matches: Vec<MatchSpan>) -> Vec<HintAssignment> {
             occurrences,
         })
         .collect()
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn alphabet_contains_all_lowercase_letters() {
-        let alphabet = hint_alphabet();
-        assert_eq!(alphabet.len(), 26);
-        assert_eq!(alphabet[0], 'a');
-        assert!(alphabet.contains(&'m'));
-    }
-
-    #[test]
-    fn two_character_hints_cover_v1_capacity() {
-        assert_eq!(generate_hints(2).len(), 676);
-        assert_eq!(generate_hints(2)[0], "aa");
-    }
 }

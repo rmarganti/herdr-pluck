@@ -21,6 +21,7 @@ pub struct PaneText {
     pub dimensions: PaneDimensions,
 }
 
+/// A single occurrence of a matched pattern in the pane text.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MatchSpan {
     pub line: usize,
@@ -31,6 +32,7 @@ pub struct MatchSpan {
     pub priority: u16,
 }
 
+/// A unique matched text pattern and all its occurrences in the pane.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct HintAssignment {
     pub hint: String,
