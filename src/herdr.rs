@@ -1,7 +1,10 @@
 use crate::model::PaneId;
 use anyhow::{anyhow, Context, Result};
+use crossterm::event::{read, Event};
+use crossterm::terminal::{disable_raw_mode, enable_raw_mode};
 use serde_json::Value;
 use std::env;
+use std::io::{self, Write};
 use std::process::Command;
 
 pub const HERDR_PLUCK_TARGET_PANE_ID: &str = "HERDR_PLUCK_TARGET_PANE_ID";
@@ -92,11 +95,33 @@ impl HerdrAdapter {
     }
 
     pub fn run_picker_placeholder(&self, target: &PaneId) -> Result<()> {
-        println!(
-            "herdr-pluck picker scaffold: target pane {}. Matching/render/input are implemented in follow-up ishes.",
-            target.0
-        );
+        println!("Herdr Pluck picker scaffold");
+        println!();
+        println!("Target pane: {}", target.0);
+        println!("Matching, rendering, input, and copy flow are implemented in follow-up ishes.");
+        println!();
+        print!("Press any key to close...");
+        io::stdout().flush()?;
+
+        enable_raw_mode().context("failed to enable raw mode for placeholder picker")?;
+        let _raw_mode_guard = RawModeGuard;
+
+        loop {
+            if matches!(read()?, Event::Key(_)) {
+                break;
+            }
+        }
+
+        println!();
         Ok(())
+    }
+}
+
+struct RawModeGuard;
+
+impl Drop for RawModeGuard {
+    fn drop(&mut self) {
+        let _ = disable_raw_mode();
     }
 }
 
