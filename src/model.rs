@@ -93,15 +93,33 @@ pub struct PaneText {
     pub dimensions: PaneDimensions,
 }
 
-/// A single occurrence of a matched pattern in the pane text.
+/// Copied/highlighted occurrence found on one unwrapped logical pane line.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MatchSpan {
+    /// Zero-based logical line index.
     pub line: usize,
+    /// UTF-8 byte offset where the copied/highlighted substring starts.
     pub start: usize,
+    /// UTF-8 byte offset immediately after the copied/highlighted substring.
     pub end: usize,
+    /// Copied text; for regexes with named capture `match`, this is that capture.
     pub text: String,
+    /// Built-in pattern name that produced this occurrence.
     pub pattern: String,
+    /// Match precedence where lower numbers are higher priority.
     pub priority: u16,
+}
+
+impl MatchSpan {
+    /// Returns the matched byte length used by matcher tie-breaking.
+    pub fn len_bytes(&self) -> usize {
+        self.end.saturating_sub(self.start)
+    }
+
+    /// Returns whether copied/highlighted byte ranges overlap on the same logical line.
+    pub fn overlaps(&self, other: &Self) -> bool {
+        self.line == other.line && self.start < other.end && other.start < self.end
+    }
 }
 
 /// A unique matched text pattern and all its occurrences in the pane.

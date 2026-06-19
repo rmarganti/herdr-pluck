@@ -1,14 +1,14 @@
 ---
 # herdr-pluck-obnm
 title: Implement built-in pattern engine
-status: todo
+status: completed
 type: task
 priority: high
 tags:
 - pluck
 - matching
 created_at: 2026-06-19T03:15:42.545423Z
-updated_at: 2026-06-19T03:21:41.649243Z
+updated_at: 2026-06-19T18:50:57.258389Z
 parent: herdr-pluck-t3sf
 blocked_by:
 - herdr-pluck-jyye
@@ -43,3 +43,19 @@ Use tmux-fingers as behavioral prior art, not as a requirement to clone every fe
 - Capture/start flow and joined wrapped-line behavior: [`src/fingers/commands/start.cr`](https://github.com/Morantron/tmux-fingers/blob/master/src/fingers/commands/start.cr)
 - tmux capture/copy helper behavior: [`src/tmux.cr`](https://github.com/Morantron/tmux-fingers/blob/master/src/tmux.cr)
 - Matching, named `match` capture, duplicate hint reuse, and skip-shorter-than-hint behavior: [`src/fingers/hinter.cr`](https://github.com/Morantron/tmux-fingers/blob/master/src/fingers/hinter.cr)
+
+
+## Implementation Notes
+- Replaced the scaffold matcher with a shallow public API, `patterns::find_matches(&[String]) -> Vec<MatchSpan>`, backed by cached hardcoded built-in regexes.
+- Kept `PatternDefinition` and custom-pattern plumbing private so callers receive resolved, first-visible-order matches without composing matcher internals.
+- Implemented the six v1 pattern classes only: tmux-fingers-compatible URL schemes/delimiters, tmux-fingers path behavior, uppercase/lowercase UUIDs, uppercase/lowercase 7-40 byte Git SHAs, loose tmux-fingers IPv4 addresses, and tmux-fingers long numeric identifiers.
+- Implemented named `match` capture handling so the copied/highlighted capture range becomes the `MatchSpan` range and overlap range.
+- Implemented overlap resolution within each logical line using priority ascending, byte length descending, position, and internal pattern definition order as the deterministic fallback.
+- Preserved duplicate copied-text occurrences for `hints::assign_hints` to deduplicate later, and sorted final output top-to-bottom/left-to-right for hint assignment.
+- Documented `MatchSpan` byte-offset and lower-number-higher-priority semantics in `src/model.rs`.
+
+## Verification Results
+- `cargo fmt --all -- --check` passed.
+- `cargo test --all-features` passed.
+- `cargo clippy --all-targets --all` passed.
+- `ish check` passed.
