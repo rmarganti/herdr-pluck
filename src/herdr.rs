@@ -197,6 +197,7 @@ struct LayoutResult {
     layout: LayoutSnapshot,
 }
 
+/// Herdr tab layout snapshot returned by `pane layout` in Herdr-global coordinates.
 #[derive(Debug, Clone, Deserialize)]
 pub struct LayoutSnapshot {
     area: Rect,
@@ -206,6 +207,7 @@ pub struct LayoutSnapshot {
     zoomed: bool,
 }
 
+/// Pane entry within a Herdr layout snapshot.
 #[derive(Debug, Clone, Deserialize)]
 pub struct LayoutPane {
     #[serde(default)]
