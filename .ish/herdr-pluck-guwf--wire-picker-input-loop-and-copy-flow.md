@@ -9,7 +9,7 @@ tags:
 - picker
 - input
 created_at: 2026-06-19T03:16:25.652609Z
-updated_at: 2026-06-19T03:16:25.652609Z
+updated_at: 2026-06-19T19:16:54.039084Z
 parent: herdr-pluck-t3sf
 blocked_by:
 - herdr-pluck-obnm
@@ -17,6 +17,7 @@ blocked_by:
 - herdr-pluck-z4cv
 - herdr-pluck-gz33
 - herdr-pluck-vhdh
+- herdr-pluck-1iof
 ---
 
 ## Context
@@ -27,7 +28,8 @@ The interaction is copy-only and keyboard-only. Exact fixed-width hint entry cop
 ## Dependencies
 - Blocked by `herdr-pluck-obnm` for pattern matching and deduplication.
 - Blocked by `herdr-pluck-94xq` for fixed-width hint assignment and lookup.
-- Blocked by `herdr-pluck-z4cv` for overlay rendering output.
+- Blocked by `herdr-pluck-z4cv` for abstract overlay rendering output.
+- Blocked by `herdr-pluck-1iof` for terminal smoke output before full picker input/copy wiring.
 - Blocked by `herdr-pluck-gz33` for clipboard copy execution.
 - Blocked by `herdr-pluck-vhdh` for target pane read/layout integration.
 
