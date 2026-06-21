@@ -10,3 +10,4 @@
 - `cargo fmt --all -- --check`
 - `cargo test --all-features`
 - `cargo clippy --all-targets --all`
+- Any live, end-to-end testing can be done with the `herdr` CLI and `/herdr` agent skill.

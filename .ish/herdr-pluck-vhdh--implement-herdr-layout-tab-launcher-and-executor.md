@@ -1,7 +1,7 @@
 ---
 # herdr-pluck-vhdh
 title: Implement Herdr layout-tab launcher and executor
-status: todo
+status: completed
 type: task
 priority: high
 tags:
@@ -10,7 +10,7 @@ tags:
 - layout-tab
 - refactor
 created_at: 2026-06-19T03:16:14.467335Z
-updated_at: 2026-06-21T13:14:58.970104Z
+updated_at: 2026-06-21T18:49:23.786491Z
 parent: herdr-pluck-t3sf
 blocked_by:
 - herdr-pluck-jyye
@@ -30,7 +30,7 @@ Use Herdr's documented plugin/CLI/socket APIs, not private internals. Prefer `HE
 - The pure layout planning portion should be implemented/tested before relying on real Herdr side effects.
 
 ## Work
-- Replace the production action entrypoint with `herdr-pluck open`; keep any overlay entrypoint debug-only if retained at all.
+- Replace the production action entrypoint with `herdr-pluck open`; remove the old overlay entrypoint and manifest pane from the completed production path.
 - Parse Herdr/plugin context environment to determine the originally focused target pane id.
 - Capture Herdr `pane layout` data including area, panes, splits, tab id, workspace id, focused pane id, and zoom state.
 - Add/refine domain types for source pane snapshots, per-pane geometry, split directions, layout nodes, temp-tab session data, and text capture mode.
@@ -69,3 +69,67 @@ Use the online Herdr repository as the source for exact plugin/CLI/API behavior:
 - Production domain types now exist in `src/model.rs`: `SplitDirection`, `PaneTextCaptureMode`, `SourcePaneGeometry`, `SourcePaneSnapshot`, `TempTabSession`, `LayoutNode`, and `LayoutRecreationPlan`.
 - `src/herdr.rs` exposes `derive_layout_recreation_plan` as pure planning scaffolding and `SnapshotTransportConstraints::choose_transport` for the initial env-json vs temp-file transport contract.
 - Downstream work should expand this Herdr interface behind a fakeable command runner and replace the current simple split partitioning with full coverage for nested/2x2/inconsistent layout cases.
+
+
+
+## Design Clarifications
+- Do not keep `open-overlay` after this work is complete; once the layout-tab launcher is in place, remove the old overlay command and manifest pane rather than retaining a debug/deprecated alternate path.
+- Completion should leave a semi-working implementation for manual testing: invoking `rmarganti.herdr-pluck.pluck` should create a temporary layout tab, replay one-pane/two-pane/2x2 source layouts, launch the picker placeholder or snapshot-aware smoke command in the corresponding target pane, keep non-target panes inert/quiet, and restore focus/close the temp tab on normal picker exit. Full hint input and clipboard copy remain blocked on downstream `herdr-pluck-guwf`; terminal styled hint smoke may be completed in `herdr-pluck-1iof` if not folded into this task.
+
+
+
+## Implementation Notes
+- Replaced the production `open-overlay` path with `herdr-pluck open` and removed the manifest overlay pane entry.
+- Split the Herdr integration into `src/herdr/` modules: `context`, `layout`, `commands`, `executor`, and `snapshot`, with `mod.rs` exposing the narrow adapter API.
+- Moved production layout-tab domain types into `src/model.rs`, including source snapshots, temp sessions, split directions, layout nodes, and picker snapshots.
+- Added a fakeable Herdr command runner and command wrapper for `pane layout`, `pane read`, `tab create`, `pane split`, `pane run`, `tab focus`, and `tab close`.
+- Implemented pure layout planning from Herdr layout snapshots into binary `LayoutNode` trees with tested single-pane, uneven split, 2x2/nested, missing-target, and inconsistent-boundary behavior.
+- Implemented layout replay into a temporary tab, source-to-temp pane mapping, focus-aware split replay so the target pane is focused, inert non-target pane commands, snapshot temp-file transport, picker placeholder launch, and cleanup on picker exit.
+- Updated README and `herdr-plugin.toml` to document/use the layout-tab entrypoint.
+
+## Verification Results
+- `cargo fmt --all -- --check` passed.
+- `cargo test --all-features` passed.
+- `cargo clippy --all-targets --all` passed.
+- `cargo build --release` passed.
+- `ish check` passed.
+- `herdr plugin link .` succeeded and `herdr plugin action list --plugin rmarganti.herdr-pluck` showed `pluck` running `./target/release/herdr-pluck open`.
+- Manual Herdr skill smoke: direct `./target/release/herdr-pluck open --target-pane <pane>` created a temporary `Herdr Pluck` tab, replayed the source tab pane count/layout, launched the picker scaffold in the mapped target temp pane, accepted `q`, closed the temp tab, and restored focus to the source tab.
+- Manual Herdr skill 2x2 smoke: created a four-pane source tab, targeted the bottom-right pane containing `HERDR_PLUCK_TEST https://example.com/path /tmp/herdr-pluck-demo abcdef1234567890 10.20.30.40 9876543210`, verified the temporary tab recreated four panes with the picker focused in the bottom-right pane, verified captured text appeared in the picker scaffold, sent `q`, and confirmed temp/source smoke tabs were cleaned up.
+- Manual Herdr skill action smoke: `herdr plugin action invoke rmarganti.herdr-pluck.pluck` launched the layout-tab picker through the manifest action, then `q` closed the temp tab and restored focus.
+
+
+
+## Zoom Follow-up
+- Preserved source zoom behavior in the layout-tab launcher: when the source layout reports `zoomed=true` and the target pane is focused, the mapped temporary target pane is explicitly zoomed with `herdr pane zoom <temp-pane> --on` before launching picker mode.
+- Updated snapshot sizing/read-line capture to derive target dimensions from the effective visible source geometry, so zoomed source panes use the full zoomed content area instead of the unzoomed split rect.
+- Added a fake-runner executor test proving the temp target pane is zoomed before pane run commands and that the picker snapshot records zoomed target dimensions.
+
+## Zoom Follow-up Verification
+- `cargo fmt --all -- --check` passed.
+- `cargo test --all-features` passed.
+- `cargo clippy --all-targets --all` passed.
+- `ish check` passed.
+- Manual Herdr skill zoom smoke: created a two-pane source tab, zoomed the right target pane, invoked `./target/release/herdr-pluck open --target-pane <zoomed-pane>`, confirmed the temporary `Herdr Pluck` tab reported `zoomed=true` with the mapped target pane focused, and confirmed picker scaffold target content used full zoomed dimensions (`350x61` in the smoke run). Cleanup restored focus and removed smoke tabs.
+
+
+
+## Review Feedback Evaluation
+- Medium snapshot leak: correct and relevant. `write_snapshot_file` happened before zoom/pane-run launch, and those failure paths only cleaned up Herdr state. Added failed-launch cleanup that removes the snapshot file as well as closing/focusing Herdr session ids.
+- Low Enter prompt mismatch: correct. The picker intentionally ignores Enter to avoid immediately exiting from the `pane run` submission Enter, but the prompt said "any key". Updated the prompt to "any non-Enter key".
+- Low disconnected snapshot transport: mostly correct. The abstraction was tested but production always wrote a temp file. Wired production through `choose_picker_snapshot_transport`; current `pane run` shell-command constraints deliberately select temp-file transport.
+- Minor read-line clamp: correct enough to address. Replaced silent `height.max(1)` with a clear error when effective target content height is zero.
+
+## Review Feedback Implementation Notes
+- Added `choose_picker_snapshot_transport` and a production call site before writing picker snapshots.
+- Added `cleanup_failed_launch` and tests covering session cleanup on zoom failure plus temp snapshot file removal.
+- Added a zero-height geometry test that fails before pane text capture.
+- Added fake command-runner failure support for executor error-path tests.
+
+## Review Feedback Verification
+- `cargo fmt --all -- --check` passed.
+- `cargo test --all-features` passed.
+- `cargo clippy --all-targets --all` passed.
+- `cargo build --release` passed.
+- `ish check` passed.
+- Manual Herdr skill smoke: linked plugin, directly invoked `./target/release/herdr-pluck open --target-pane <focused-pane>`, confirmed temporary `Herdr Pluck` tab opened, picker scaffold displayed `Press any non-Enter key to close temporary tab...`, sent `q`, and confirmed focus returned to the source tab with the temp tab closed.
