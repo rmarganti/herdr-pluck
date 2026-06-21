@@ -285,9 +285,9 @@ pub fn cleanup_session<R: CommandRunner>(
     }
 }
 
-/// Runs readonly picker rendering for a loaded layout-tab snapshot.
+/// Runs picker input/copy flow for a loaded layout-tab snapshot.
 pub fn run_snapshot_picker(snapshot: &PickerSnapshot) -> Result<()> {
-    crate::picker::run_readonly_picker(snapshot)?;
+    crate::picker::run_picker(snapshot)?;
     Ok(())
 }
 

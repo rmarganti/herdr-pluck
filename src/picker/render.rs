@@ -1,8 +1,23 @@
-use crate::hints::assign_hints;
+use crate::hints::{assign_hints, HintAssignments};
 use crate::model::{PickerOutcome, PickerSnapshot, RenderLine, RenderSpan, RenderStyle};
 use crate::patterns::find_matches;
 use crate::renderer::{render_inline_hints, render_visible_inline_hints, terminal};
 use anyhow::{Context, Result};
+
+/// Rendered picker state and hint assignments derived from a captured pane snapshot.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PickerView {
+    pub lines: Vec<RenderLine>,
+    pub assignments: HintAssignments,
+    pub match_count: usize,
+}
+
+impl PickerView {
+    /// Number of unique copied texts that can be selected by hint input.
+    pub fn hint_count(&self) -> usize {
+        self.assignments.len()
+    }
+}
 
 /// Rendered, readonly picker state derived from a captured pane snapshot.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -12,8 +27,8 @@ pub struct ReadonlyPickerView {
     pub hint_count: usize,
 }
 
-/// Builds the production readonly picker view from captured pane text.
-pub fn build_readonly_picker_view(snapshot: &PickerSnapshot) -> ReadonlyPickerView {
+/// Builds the production picker view from captured pane text.
+pub fn build_picker_view(snapshot: &PickerSnapshot) -> PickerView {
     let logical_lines = snapshot
         .source
         .visible_viewport
@@ -43,10 +58,21 @@ pub fn build_readonly_picker_view(snapshot: &PickerSnapshot) -> ReadonlyPickerVi
         )
     };
 
-    ReadonlyPickerView {
+    PickerView {
         lines,
+        assignments,
         match_count: matches.len(),
-        hint_count: assignments.len(),
+    }
+}
+
+/// Builds the production readonly picker view from captured pane text.
+pub fn build_readonly_picker_view(snapshot: &PickerSnapshot) -> ReadonlyPickerView {
+    let view = build_picker_view(snapshot);
+    let hint_count = view.hint_count();
+    ReadonlyPickerView {
+        lines: view.lines,
+        match_count: view.match_count,
+        hint_count,
     }
 }
 

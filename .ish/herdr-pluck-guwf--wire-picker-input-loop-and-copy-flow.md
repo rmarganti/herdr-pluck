@@ -1,7 +1,7 @@
 ---
 # herdr-pluck-guwf
 title: Wire picker input loop and copy flow
-status: todo
+status: completed
 type: task
 priority: high
 tags:
@@ -9,7 +9,7 @@ tags:
 - picker
 - input
 created_at: 2026-06-19T03:16:25.652609Z
-updated_at: 2026-06-19T19:16:54.039084Z
+updated_at: 2026-06-21T19:37:44.663361Z
 parent: herdr-pluck-t3sf
 blocked_by:
 - herdr-pluck-obnm
@@ -46,3 +46,22 @@ The interaction is copy-only and keyboard-only. Exact fixed-width hint entry cop
 - Behavior tests cover exact hint copying, duplicate hint copy target, invalid hint clearing, Escape cancel, Ctrl-C cancel, Enter ignored, and clipboard failure handling.
 - Integration-style tests with fake Herdr adapter + fake clipboard validate the full picker decision flow from pane text to copied string.
 - `cargo test` passes.
+
+
+
+## Implementation Notes
+- Replaced the readonly picker entrypoint used by snapshot mode with the production input/copy flow.
+- Deepened `src/picker/` into focused modules for rendering, input event conversion, input sources/raw-mode, fixed-width input state, clipboard copy mapping, and session orchestration.
+- Added `PickerView` so the renderer path returns both terminal render lines and hint assignments for copy lookup.
+- Removed the old top-level `input` module from the public crate surface; picker input internals are now private to `picker`.
+- Implemented fixed-width keyboard behavior: exact hints copy immediately, invalid full-width hints clear the buffer, Enter/other events are ignored, and Escape/Ctrl-C cancel.
+- Wired exact hint lookup to copy the matched text through the clipboard adapter, not the typed hint string, and render/report clipboard failures instead of treating them as success.
+- Kept the picker flow testable with fake input sources, fake clipboard implementations, and in-memory terminal output.
+
+## Verification Results
+- `cargo fmt --all -- --check` passed.
+- `cargo test --all-features` passed.
+- `cargo clippy --all-targets --all` passed.
+- `cargo build --release` passed.
+- `ish check` passed.
+- Manual Herdr smoke: created a temporary source tab containing `https://example.com/pluck-smoke-1782070597`, launched `./target/release/herdr-pluck open --target-pane wE:p8D`, typed hint `a` in the focused Herdr Pluck temp pane, verified `pbpaste` contained the selected URL, and confirmed the temp tab closed/focus returned before cleaning up the smoke source tab.
