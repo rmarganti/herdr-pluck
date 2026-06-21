@@ -54,7 +54,7 @@ herdr server reload-config
 
 ## Usage
 
-1. Focus a Herdr pane containing a URL, path, commit SHA, UUID, IP address, or long numeric identifier.
+1. Focus a Herdr pane containing a URL, path, commit SHA, UUID, IP address, long numeric identifier, hex literal, Kubernetes reference, Git status path, branch, or diff path.
 2. Invoke `rmarganti.herdr-pluck.pluck` through your keybinding or Herdr's plugin action command.
 3. Herdr Pluck opens a temporary picker tab that mirrors the source layout and shows hints over copyable text in the target pane.
 4. Type the shown one- or two-letter hint to copy that token and close the picker.
@@ -68,14 +68,20 @@ herdr plugin action invoke rmarganti.herdr-pluck.pluck
 
 ## What gets matched
 
-Herdr Pluck v1 recognizes these built-in token types, in priority order:
+Herdr Pluck recognizes these built-in token types, in priority order:
 
 1. URLs
-2. File paths
-3. UUIDs
-4. Git SHAs
-5. IPv4 addresses
-6. Long numeric identifiers
+2. Git status paths, Git upstream branch names, and diff paths
+3. Kubernetes resource references such as `pod/nginx` or `deployment.apps/frontend`
+4. File paths
+5. UUIDs
+6. Deployment-managed Kubernetes pod names
+7. Git SHAs
+8. Hex literals such as `0xdeadBEEF`
+9. IPv4 addresses
+10. Long numeric identifiers
+
+The expanded pattern set is always enabled for v1.1-style compatibility with `tmux-fingers`; user-configurable regex sets remain out of scope for v1.
 
 When identical text appears more than once, every visible occurrence shows the same hint and copies the same text.
 

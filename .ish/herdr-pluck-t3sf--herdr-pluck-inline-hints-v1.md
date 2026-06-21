@@ -1,14 +1,14 @@
 ---
 # herdr-pluck-t3sf
 title: Herdr Pluck inline hints v1
-status: todo
+status: completed
 type: milestone
 priority: high
 tags:
 - pluck
 - prd-1781838387
 created_at: 2026-06-19T03:15:21.064212Z
-updated_at: 2026-06-19T03:21:41.623915Z
+updated_at: 2026-06-21T19:49:17.670771Z
 ---
 
 ## Context
@@ -48,3 +48,14 @@ Important PRD reference files to inspect before implementation details:
 - tmux-fingers matching/hinting: [`src/fingers/hinter.cr`](https://github.com/Morantron/tmux-fingers/blob/master/src/fingers/hinter.cr)
 - tmux-fingers destructive rendering: [`src/fingers/match_formatter.cr`](https://github.com/Morantron/tmux-fingers/blob/master/src/fingers/match_formatter.cr)
 - tmux-fingers clipboard behavior: [`src/fingers/action_runner.cr`](https://github.com/Morantron/tmux-fingers/blob/master/src/fingers/action_runner.cr) and [`src/tmux.cr`](https://github.com/Morantron/tmux-fingers/blob/master/src/tmux.cr)
+
+
+## Wrap-up Notes
+- All active child implementation ishes are completed, including final packaging/docs and expanded tmux-fingers-compatible pattern support.
+- Final verification passed for formatting, tests, clippy, and Ish graph validation.
+
+## Final Verification Results
+- `cargo fmt --all -- --check` passed.
+- `cargo test --all-features` passed.
+- `cargo clippy --all-targets --all` passed.
+- `ish check` passed.

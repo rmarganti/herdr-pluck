@@ -4,6 +4,8 @@ use std::sync::OnceLock;
 
 static BUILT_IN_PATTERNS: OnceLock<Vec<PatternDefinition>> = OnceLock::new();
 
+const KUBERNETES_RESOURCE_KINDS: &str = "deployment.app|binding|componentstatuse|configmap|endpoint|event|limitrange|namespace|node|persistentvolumeclaim|persistentvolume|pod|podtemplate|replicationcontroller|resourcequota|secret|serviceaccount|service|mutatingwebhookconfiguration.admissionregistration.k8s.io|validatingwebhookconfiguration.admissionregistration.k8s.io|customresourcedefinition.apiextension.k8s.io|apiservice.apiregistration.k8s.io|controllerrevision.apps|daemonset.apps|deployment.apps|replicaset.apps|statefulset.apps|tokenreview.authentication.k8s.io|localsubjectaccessreview.authorization.k8s.io|selfsubjectaccessreviews.authorization.k8s.io|selfsubjectrulesreview.authorization.k8s.io|subjectaccessreview.authorization.k8s.io|horizontalpodautoscaler.autoscaling|cronjob.batch|job.batch|certificatesigningrequest.certificates.k8s.io|events.events.k8s.io|daemonset.extensions|deployment.extensions|ingress.extensions|networkpolicies.extensions|podsecuritypolicies.extensions|replicaset.extensions|networkpolicie.networking.k8s.io|poddisruptionbudget.policy|clusterrolebinding.rbac.authorization.k8s.io|clusterrole.rbac.authorization.k8s.io|rolebinding.rbac.authorization.k8s.io|role.rbac.authorization.k8s.io|storageclasse.storage.k8s.io";
+
 #[derive(Debug)]
 struct PatternDefinition {
     name: &'static str,
@@ -46,13 +48,31 @@ fn built_in_patterns() -> &'static [PatternDefinition] {
                 10,
                 r#"((https?://|git@|git://|ssh://|ftp://|file:///)[^\s()"']+)"#,
             ),
+            PatternDefinition::compile("git-status", 15, r#"(modified|deleted|deleted by us|new file): +(?<match>.+)"#),
+            PatternDefinition::compile(
+                "git-status-branch",
+                15,
+                r#"Your branch is up to date with '(?<match>.*)'\."#,
+            ),
+            PatternDefinition::compile("diff", 15, r#"(---|\+\+\+) [ab]/(?<match>.*)"#),
+            PatternDefinition::compile(
+                "kubernetes",
+                18,
+                &format!(r#"\b({KUBERNETES_RESOURCE_KINDS})([/_#$%&+=@-][[:alnum:]_#$%&+=/@-]*)?\b"#),
+            ),
             PatternDefinition::compile("path", 20, r#"(([.\w\-~\$@]+)?(/[.\w\-@]+)+/?)"#),
             PatternDefinition::compile(
                 "uuid",
                 30,
                 r#"\b[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\b"#,
             ),
+            PatternDefinition::compile(
+                "kubernetes-pod",
+                35,
+                r#"\b[a-z][a-z0-9-]*[a-z0-9]-[bcdfghjklmnpqrstvwxz2456789]{5,10}-[bcdfghjklmnpqrstvwxz2456789]{5}\b"#,
+            ),
             PatternDefinition::compile("git-sha", 40, r#"\b[0-9a-fA-F]{7,40}\b"#),
+            PatternDefinition::compile("hex", 45, r#"\b0x[0-9a-fA-F]+\b"#),
             PatternDefinition::compile("ipv4", 50, r#"\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}"#),
             PatternDefinition::compile("number", 60, r#"[0-9]{4,}"#),
         ]
@@ -263,6 +283,121 @@ mod tests {
             .collect();
 
         assert_eq!(numbers, vec!["1234", "5678", "9012"]);
+    }
+
+    #[test]
+    fn finds_hex_literals_before_numeric_submatches() {
+        let matches = find_matches(&lines(["values 0xdeadBEEF 0x1234 not0xabc"]));
+        let hexes: Vec<&str> = matches
+            .iter()
+            .filter(|span| span.pattern == "hex")
+            .map(|span| span.text.as_str())
+            .collect();
+
+        assert_eq!(hexes, vec!["0xdeadBEEF", "0x1234"]);
+        assert!(!matches
+            .iter()
+            .any(|span| span.pattern == "number" && span.text == "1234"));
+    }
+
+    #[test]
+    fn finds_kubernetes_resource_references() {
+        let matches = find_matches(&lines([
+            "kubectl get pod/nginx-123 service/api deployment.apps/frontend",
+        ]));
+        let resources: Vec<&str> = matches
+            .iter()
+            .filter(|span| span.pattern == "kubernetes")
+            .map(|span| span.text.as_str())
+            .collect();
+
+        assert_eq!(
+            resources,
+            vec!["pod/nginx-123", "service/api", "deployment.apps/frontend"]
+        );
+    }
+
+    #[test]
+    fn finds_deployment_managed_kubernetes_pod_names() {
+        let matches = find_matches(&lines([
+            "pods nginx-deployment-66b6c48dd5-7xb2r api-abcde-12345 bad-pod-abcde-aeiou",
+        ]));
+        let pods: Vec<&str> = matches
+            .iter()
+            .filter(|span| span.pattern == "kubernetes-pod")
+            .map(|span| span.text.as_str())
+            .collect();
+
+        assert_eq!(pods, vec!["nginx-deployment-66b6c48dd5-7xb2r"]);
+    }
+
+    #[test]
+    fn finds_git_status_paths_with_named_capture() {
+        let matches = find_matches(&lines([
+            "modified:   src/main.rs",
+            "deleted by us: docs/old.md",
+            "new file:   README.md",
+        ]));
+        let statuses: Vec<&MatchSpan> = matches
+            .iter()
+            .filter(|span| span.pattern == "git-status")
+            .collect();
+
+        assert_eq!(
+            statuses
+                .iter()
+                .map(|span| span.text.as_str())
+                .collect::<Vec<_>>(),
+            vec!["src/main.rs", "docs/old.md", "README.md"]
+        );
+        assert_eq!(statuses[0].start, "modified:   ".len());
+    }
+
+    #[test]
+    fn finds_git_status_branch_name_with_named_capture() {
+        let matches = find_matches(&lines(["Your branch is up to date with 'origin/main'."]));
+        let branch = matches
+            .iter()
+            .find(|span| span.pattern == "git-status-branch")
+            .unwrap();
+
+        assert_eq!(branch.text, "origin/main");
+    }
+
+    #[test]
+    fn finds_diff_paths_with_named_capture() {
+        let matches = find_matches(&lines(["--- a/src/lib.rs", "+++ b/src/lib.rs"]));
+        let diff_paths: Vec<&str> = matches
+            .iter()
+            .filter(|span| span.pattern == "diff")
+            .map(|span| span.text.as_str())
+            .collect();
+
+        assert_eq!(diff_paths, vec!["src/lib.rs", "src/lib.rs"]);
+    }
+
+    #[test]
+    fn expanded_patterns_win_over_lower_priority_path_and_number_overlaps() {
+        let matches = find_matches(&lines(["+++ b/src/lib.rs", "pod/nginx 0x1234"]));
+        let patterns: Vec<&str> = matches.iter().map(|span| span.pattern.as_str()).collect();
+
+        assert_eq!(patterns, vec!["diff", "kubernetes", "hex"]);
+    }
+
+    #[test]
+    fn expanded_patterns_avoid_common_false_positive_boundaries() {
+        let matches = find_matches(&lines(["not0xabc serviceable api-abcde-aeiou"]));
+        let expanded: Vec<&MatchSpan> = matches
+            .iter()
+            .filter(|span| {
+                matches!(
+                    span.pattern.as_str(),
+                    "hex" | "kubernetes" | "kubernetes-pod"
+                )
+            })
+            .collect();
+
+        assert!(expanded.is_empty());
     }
 
     #[test]
