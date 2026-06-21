@@ -1,33 +1,42 @@
 # Herdr Pluck
 
-Rust Herdr plugin for tmux-fingers-style inline hints over visible pane text.
+Herdr Pluck is a Herdr plugin for quickly copying visible terminal tokens with short keyboard hints, inspired by `tmux-fingers`.
 
-## Development
+Invoke the plugin while a pane is focused, type the displayed hint for the token you want, and the selected text is copied to your system clipboard. Escape or Ctrl-C cancels.
 
-```bash
-cargo build
-cargo test
-cargo fmt --all -- --check
-```
+## Requirements
 
-## Herdr plugin shape
+- Herdr 0.7.0 or newer
+- Rust/Cargo to build from source
+- A system clipboard command:
+  - macOS: `pbcopy`
+  - Linux Wayland: `wl-copy`
+  - Linux X11: `xclip` or `xsel`
 
-The plugin manifest is `herdr-plugin.toml`.
+## Install
 
-- Action: `rmarganti.herdr-pluck.pluck`
-- Production entrypoint: `herdr-pluck open`
-- Picker entrypoint: `herdr-pluck pick --snapshot PATH`
-- Binary: `herdr-pluck`
-
-During local development:
+From this checkout:
 
 ```bash
 cargo build --release
 herdr plugin link .
-herdr plugin action invoke rmarganti.herdr-pluck.pluck
 ```
 
-Suggested keybinding:
+Verify Herdr can see the action:
+
+```bash
+herdr plugin action list --plugin rmarganti.herdr-pluck
+```
+
+The action id is:
+
+```text
+rmarganti.herdr-pluck.pluck
+```
+
+## Keybinding
+
+Add a Herdr `plugin_action` binding to your Herdr config, choosing any free key you prefer:
 
 ```toml
 [[keys.command]]
@@ -37,15 +46,67 @@ command = "rmarganti.herdr-pluck.pluck"
 description = "pluck visible token"
 ```
 
-## Entrypoints
+Reload Herdr config after editing:
 
 ```bash
-herdr-pluck open [--target-pane PANE_ID]
-herdr-pluck pick --snapshot PATH
+herdr server reload-config
 ```
 
-The action entrypoint captures the originally focused pane, creates a temporary
-Herdr tab with the same split layout, launches picker mode in the corresponding
-temporary pane, and closes the temporary tab when the picker exits. The current
-picker is still a scaffold placeholder; full hint input and clipboard copy are
-follow-up work.
+## Usage
+
+1. Focus a Herdr pane containing a URL, path, commit SHA, UUID, IP address, or long numeric identifier.
+2. Invoke `rmarganti.herdr-pluck.pluck` through your keybinding or Herdr's plugin action command.
+3. Herdr Pluck opens a temporary picker tab that mirrors the source layout and shows hints over copyable text in the target pane.
+4. Type the shown one- or two-letter hint to copy that token and close the picker.
+5. Press Escape or Ctrl-C to cancel without copying.
+
+You can also invoke the action from the CLI:
+
+```bash
+herdr plugin action invoke rmarganti.herdr-pluck.pluck
+```
+
+## What gets matched
+
+Herdr Pluck v1 recognizes these built-in token types, in priority order:
+
+1. URLs
+2. File paths
+3. UUIDs
+4. Git SHAs
+5. IPv4 addresses
+6. Long numeric identifiers
+
+When identical text appears more than once, every visible occurrence shows the same hint and copies the same text.
+
+## Behavior and limits
+
+- Hints are keyboard-only and fixed-width: one character for small match sets, two characters for larger match sets.
+- Hint characters replace the beginning of matched text on screen so pane geometry stays aligned.
+- Matching is based on visible pane content and handles soft-wrapped tokens such as long URLs.
+- The picker renders a simplified view instead of preserving the source pane's original colors.
+- v1 supports up to 676 unique copied texts in one picker view.
+- Enter is ignored while the picker is active.
+- Invalid full-width hints clear the typed hint buffer so you can try again.
+
+## Not in v1
+
+- Mouse selection
+- OSC52 clipboard copying
+- Custom regex configuration
+- Non-copy actions such as opening URLs or jumping to text
+- Multi-select
+- Preserving original ANSI colors/styles
+- Windows support
+
+## Troubleshooting
+
+If invoking the action does nothing useful, check that the plugin is linked and the release binary exists:
+
+```bash
+cargo build --release
+herdr plugin link .
+herdr plugin action list --plugin rmarganti.herdr-pluck
+```
+
+If copying fails, install one of the supported clipboard tools for your platform and try again.
