@@ -99,6 +99,10 @@ When identical text appears more than once, every visible occurrence shows the s
 - Preserving original ANSI colors/styles
 - Windows support
 
+## License
+
+MIT; see [LICENSE](LICENSE).
+
 ## Troubleshooting
 
 If invoking the action does nothing useful, check that the plugin is linked and the release binary exists:
