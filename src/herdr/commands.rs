@@ -62,6 +62,19 @@ impl<'a, R: CommandRunner> HerdrCommands<'a, R> {
         Ok(String::from_utf8_lossy(&stdout).into_owned())
     }
 
+    pub fn pane_read_visible(&mut self, pane: &PaneId, lines: u16) -> Result<String> {
+        let stdout = self.run_checked(vec![
+            "pane",
+            "read",
+            &pane.0,
+            "--source",
+            "visible",
+            "--lines",
+            &lines.to_string(),
+        ])?;
+        Ok(String::from_utf8_lossy(&stdout).into_owned())
+    }
+
     pub fn tab_create(
         &mut self,
         workspace_id: &str,

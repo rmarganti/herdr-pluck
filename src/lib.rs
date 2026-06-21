@@ -5,4 +5,6 @@ pub mod hints;
 pub mod input;
 pub mod model;
 pub mod patterns;
+pub mod picker;
 pub mod renderer;
+pub mod viewport;
