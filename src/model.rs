@@ -270,9 +270,3 @@ pub enum PickerOutcome {
     Cancelled,
     NoMatches,
 }
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub enum CopyResult {
-    Copied { tool: String },
-    Failed { message: String },
-}

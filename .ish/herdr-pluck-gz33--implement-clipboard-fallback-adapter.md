@@ -1,14 +1,14 @@
 ---
 # herdr-pluck-gz33
 title: Implement clipboard fallback adapter
-status: todo
+status: completed
 type: task
 priority: normal
 tags:
 - pluck
 - clipboard
 created_at: 2026-06-19T03:16:05.347232Z
-updated_at: 2026-06-19T03:21:41.660778Z
+updated_at: 2026-06-21T19:26:58.286482Z
 parent: herdr-pluck-t3sf
 blocked_by:
 - herdr-pluck-jyye
@@ -40,3 +40,17 @@ Use tmux-fingers clipboard behavior as prior art for shelling out to available p
 
 - [`src/fingers/action_runner.cr`](https://github.com/Morantron/tmux-fingers/blob/master/src/fingers/action_runner.cr)
 - [`src/tmux.cr`](https://github.com/Morantron/tmux-fingers/blob/master/src/tmux.cr)
+
+
+## Implementation Notes
+- Replaced the flat clipboard module with a deep `src/clipboard/` module tree and a small public interface: `Clipboard`, `SystemClipboard`, `CopySuccess`, `ClipboardError`, and `copy_to_system_clipboard`.
+- Added platform/session-aware fallback ordering for `pbcopy`, `wl-copy`, `xclip -selection clipboard`, and `xsel --clipboard --input`, while still trying supported fallbacks when session hints are absent.
+- Added an injectable command-runner boundary so command discovery and copy execution can be tested without touching the real system clipboard.
+- Implemented system execution by piping selected text to the chosen command's stdin and surfacing spawn, write, wait, command-status, and no-tool failures as user-facing `ClipboardError`s.
+- Removed the clipboard-specific `CopyResult` from global `model.rs`; clipboard result/error types now live in the clipboard domain.
+
+## Verification Results
+- `cargo fmt --all -- --check` passed.
+- `cargo test --all-features` passed.
+- `cargo clippy --all-targets --all` passed.
+- `ish check` passed.
