@@ -121,7 +121,27 @@ pub struct SourcePaneSnapshot {
     pub target_content_width: u16,
     pub target_content_height: u16,
     pub logical_lines: Vec<String>,
+    pub visible_viewport: Option<VisibleViewport>,
     pub capture_mode: PaneTextCaptureMode,
+}
+
+/// Exact visible pane rows plus the logical lines reconstructed from soft wraps.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct VisibleViewport {
+    pub rows: Vec<String>,
+    pub logical_lines: Vec<String>,
+    pub segments: Vec<LogicalLineVisualSegment>,
+}
+
+/// Maps a logical byte range onto a row/column range in the exact visible viewport.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LogicalLineVisualSegment {
+    pub logical_line: usize,
+    pub logical_start: usize,
+    pub logical_end: usize,
+    pub row: usize,
+    pub col_start: usize,
+    pub col_end: usize,
 }
 
 /// Temporary layout-tab session ids required for explicit cleanup and focus restoration.

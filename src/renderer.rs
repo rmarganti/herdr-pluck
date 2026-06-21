@@ -1,7 +1,11 @@
+pub mod terminal;
+
 use crate::hints::HintAssignments;
-use crate::model::{MatchSpan, Rect, RenderLine, RenderSpan, RenderStyle};
+use crate::model::{
+    LogicalLineVisualSegment, MatchSpan, Rect, RenderLine, RenderSpan, RenderStyle, VisibleViewport,
+};
 use std::collections::HashSet;
-use unicode_width::UnicodeWidthChar;
+use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 /// Renders logical pane lines as a fixed-size styled viewport with destructive inline hints.
 pub fn render_inline_hints(
@@ -32,6 +36,151 @@ pub fn render_inline_hints(
         padded.extend(wrapped);
         padded
     }
+}
+
+/// Renders exact visible rows with inline hints placed at their source row and column.
+pub fn render_visible_inline_hints(
+    viewport: &VisibleViewport,
+    assignments: &HintAssignments,
+    width: u16,
+    height: u16,
+) -> Vec<RenderLine> {
+    if width == 0 || height == 0 {
+        return Vec::new();
+    }
+
+    let width = width as usize;
+    let height = height as usize;
+    let mut cells = viewport
+        .rows
+        .iter()
+        .take(height)
+        .map(|row| row_cells(row, width))
+        .collect::<Vec<_>>();
+    while cells.len() < height {
+        cells.push(row_cells("", width));
+    }
+
+    for assignment in assignments.assignments() {
+        for occurrence in &assignment.occurrences {
+            apply_visible_occurrence(
+                &mut cells,
+                &viewport.rows,
+                &viewport.segments,
+                occurrence,
+                &assignment.hint,
+            );
+        }
+    }
+
+    cells.into_iter().map(cells_to_render_line).collect()
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct Cell {
+    text: String,
+    style: RenderStyle,
+}
+
+fn row_cells(row: &str, width: usize) -> Vec<Cell> {
+    let mut cells = Vec::with_capacity(width);
+    for ch in row.chars() {
+        let char_width = ch.width().unwrap_or(0);
+        if char_width == 0 {
+            continue;
+        }
+        if cells.len() + char_width > width {
+            break;
+        }
+
+        cells.push(Cell {
+            text: ch.to_string(),
+            style: RenderStyle::Unmatched,
+        });
+        for _ in 1..char_width {
+            cells.push(Cell {
+                text: String::new(),
+                style: RenderStyle::Unmatched,
+            });
+        }
+    }
+
+    while cells.len() < width {
+        cells.push(Cell {
+            text: " ".to_string(),
+            style: RenderStyle::Unmatched,
+        });
+    }
+    cells
+}
+
+fn apply_visible_occurrence(
+    cells: &mut [Vec<Cell>],
+    rows: &[String],
+    segments: &[LogicalLineVisualSegment],
+    occurrence: &MatchSpan,
+    hint: &str,
+) {
+    let mut positions = Vec::new();
+    for segment in segments
+        .iter()
+        .filter(|segment| segment.logical_line == occurrence.line)
+    {
+        let start = occurrence.start.max(segment.logical_start);
+        let end = occurrence.end.min(segment.logical_end);
+        if start >= end {
+            continue;
+        }
+
+        let Some(segment_text) = rows.get(segment.row) else {
+            continue;
+        };
+        let start_in_segment = start.saturating_sub(segment.logical_start);
+        let end_in_segment = end.saturating_sub(segment.logical_start);
+        let Some(start_cols) = display_width_until_byte(segment_text, start_in_segment) else {
+            continue;
+        };
+        let Some(end_cols) = display_width_until_byte(segment_text, end_in_segment) else {
+            continue;
+        };
+        let col_start = segment.col_start + start_cols;
+        let col_end = segment.col_start + end_cols;
+        for col in col_start..col_end.min(segment.col_end) {
+            positions.push((segment.row, col));
+        }
+    }
+
+    if positions.is_empty() {
+        return;
+    }
+
+    for &(row, col) in &positions {
+        if let Some(cell) = cells.get_mut(row).and_then(|row| row.get_mut(col)) {
+            cell.style = RenderStyle::Match;
+        }
+    }
+
+    for ((row, col), hint_ch) in positions.into_iter().zip(hint.chars()) {
+        if let Some(cell) = cells.get_mut(row).and_then(|row| row.get_mut(col)) {
+            cell.text = hint_ch.to_string();
+            cell.style = RenderStyle::Hint;
+        }
+    }
+}
+
+fn cells_to_render_line(cells: Vec<Cell>) -> RenderLine {
+    let mut spans = Vec::new();
+    for cell in cells {
+        push_span(&mut spans, &cell.text, cell.style);
+    }
+    RenderLine { spans }
+}
+
+fn display_width_until_byte(text: &str, byte_offset: usize) -> Option<usize> {
+    if byte_offset > text.len() || !text.is_char_boundary(byte_offset) {
+        return None;
+    }
+    Some(UnicodeWidthStr::width(&text[..byte_offset]))
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -355,6 +504,84 @@ mod tests {
 
         assert!(render_inline_hints(&["abc".to_string()], &assignments, 0, 3).is_empty());
         assert!(render_inline_hints(&["abc".to_string()], &assignments, 3, 0).is_empty());
+    }
+
+    #[test]
+    fn visible_render_preserves_top_row_position() {
+        let viewport = crate::viewport::map_visible_viewport(
+            vec![
+                "https://example.com".to_string(),
+                "".to_string(),
+                "".to_string(),
+            ],
+            30,
+            3,
+        );
+        let assignments = assign_hints(vec![span("https://example.com", 0, 0)]);
+
+        let lines = render_visible_inline_hints(&viewport, &assignments, 30, 3);
+
+        assert_rows(
+            &lines,
+            &[
+                &[
+                    (RenderStyle::Hint, "a"),
+                    (RenderStyle::Match, "ttps://example.com"),
+                    (RenderStyle::Unmatched, "           "),
+                ],
+                &[(RenderStyle::Unmatched, "                              ")],
+                &[(RenderStyle::Unmatched, "                              ")],
+            ],
+        );
+    }
+
+    #[test]
+    fn visible_render_maps_match_after_wide_utf8_prefix() {
+        let row = "界 https://example.com";
+        let viewport = crate::viewport::map_visible_viewport(vec![row.to_string()], 30, 1);
+        let assignments = assign_hints(vec![MatchSpan {
+            line: 0,
+            start: "界 ".len(),
+            end: row.len(),
+            text: "https://example.com".to_string(),
+            pattern: "url".to_string(),
+            priority: 10,
+        }]);
+
+        let lines = render_visible_inline_hints(&viewport, &assignments, 30, 1);
+
+        assert_rows(
+            &lines,
+            &[&[
+                (RenderStyle::Unmatched, "界 "),
+                (RenderStyle::Hint, "a"),
+                (RenderStyle::Match, "ttps://example.com"),
+                (RenderStyle::Unmatched, "        "),
+            ]],
+        );
+    }
+
+    #[test]
+    fn visible_render_highlights_wrapped_match_across_rows() {
+        let viewport = crate::viewport::map_visible_viewport(
+            vec!["https://exa".to_string(), "mple.com".to_string()],
+            11,
+            2,
+        );
+        let assignments = assign_hints(vec![span("https://example.com", 0, 0)]);
+
+        let lines = render_visible_inline_hints(&viewport, &assignments, 11, 2);
+
+        assert_rows(
+            &lines,
+            &[
+                &[(RenderStyle::Hint, "a"), (RenderStyle::Match, "ttps://exa")],
+                &[
+                    (RenderStyle::Match, "mple.com"),
+                    (RenderStyle::Unmatched, "   "),
+                ],
+            ],
+        );
     }
 
     #[test]

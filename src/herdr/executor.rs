@@ -7,6 +7,7 @@ use crate::herdr::snapshot::{
     remove_snapshot_file, write_snapshot_file, SnapshotFile, SnapshotTransport,
 };
 use crate::model::{LayoutNode, PaneId, PickerSnapshot, TempTabSession};
+use crate::viewport::map_visible_viewport;
 use anyhow::{anyhow, Context, Result};
 use std::collections::HashMap;
 use std::path::Path;
@@ -40,11 +41,19 @@ pub fn launch_layout_tab_picker<R: CommandRunner>(
     if read_lines == 0 {
         anyhow::bail!("target pane {target} has zero visible content height");
     }
-    let pane_text = {
+    let visible_text = {
         let mut commands = HerdrCommands::new(herdr_bin, runner);
-        commands.pane_read_recent_unwrapped(target, read_lines)?
+        commands.pane_read_visible(target, read_lines)?
     };
-    let logical_lines = pane_text.lines().map(str::to_string).collect::<Vec<_>>();
+    let visible_rows = visible_text.lines().map(str::to_string).collect::<Vec<_>>();
+    let visible_viewport = map_visible_viewport(
+        visible_rows,
+        derive_source_geometry(&layout, target)
+            .source_content_rect
+            .width,
+        read_lines,
+    );
+    let logical_lines = visible_viewport.logical_lines.clone();
 
     let workspace_id = layout
         .workspace_id
@@ -82,7 +91,13 @@ pub fn launch_layout_tab_picker<R: CommandRunner>(
         .cloned()
         .ok_or_else(|| anyhow!("layout replay did not create a temp pane for target {target}"))?;
 
-    let snapshot = build_source_snapshot(&layout, target, logical_lines, session.clone())?;
+    let snapshot = build_source_snapshot(
+        &layout,
+        target,
+        logical_lines,
+        Some(visible_viewport),
+        session.clone(),
+    )?;
     let snapshot_file = match choose_picker_snapshot_transport(&snapshot)? {
         SnapshotTransport::TempFile => write_snapshot_file(&snapshot)?,
         SnapshotTransport::EnvJson => {
@@ -270,51 +285,9 @@ pub fn cleanup_session<R: CommandRunner>(
     }
 }
 
-/// Runs the minimal picker placeholder for a loaded layout-tab snapshot.
+/// Runs readonly picker rendering for a loaded layout-tab snapshot.
 pub fn run_snapshot_picker(snapshot: &PickerSnapshot) -> Result<()> {
-    use crossterm::event::{read, Event, KeyCode};
-    use crossterm::terminal::{disable_raw_mode, enable_raw_mode};
-    use std::io::{self, Write};
-
-    struct RawModeGuard;
-    impl Drop for RawModeGuard {
-        fn drop(&mut self) {
-            let _ = disable_raw_mode();
-        }
-    }
-
-    println!("Herdr Pluck layout-tab picker scaffold");
-    println!();
-    println!("Source target pane: {}", snapshot.source.target_pane_id);
-    println!("Source tab: {}", snapshot.source.source_tab_id);
-    println!("Temporary tab: {}", snapshot.session.temp_tab_id);
-    println!(
-        "Target content: {}x{}",
-        snapshot.source.target_content_width, snapshot.source.target_content_height
-    );
-    println!("Captured lines: {}", snapshot.source.logical_lines.len());
-    if let Some(first_matchable) = snapshot
-        .source
-        .logical_lines
-        .iter()
-        .find(|line| !line.trim().is_empty())
-    {
-        println!("First captured line: {first_matchable}");
-    }
-    println!();
-    print!("Press any non-Enter key to close temporary tab...");
-    io::stdout().flush()?;
-
-    enable_raw_mode().context("failed to enable raw mode for layout-tab picker")?;
-    let _guard = RawModeGuard;
-    loop {
-        match read()? {
-            Event::Key(key) if key.code != KeyCode::Enter => break,
-            Event::Key(_) => continue,
-            _ => continue,
-        }
-    }
-    println!();
+    crate::picker::run_readonly_picker(snapshot)?;
     Ok(())
 }
 
