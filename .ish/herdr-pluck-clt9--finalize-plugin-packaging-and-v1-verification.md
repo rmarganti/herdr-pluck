@@ -1,7 +1,7 @@
 ---
 # herdr-pluck-clt9
 title: Finalize plugin packaging and v1 verification
-status: todo
+status: completed
 type: task
 priority: normal
 tags:
@@ -9,7 +9,7 @@ tags:
 - packaging
 - docs
 created_at: 2026-06-19T03:16:34.072605Z
-updated_at: 2026-06-19T03:21:41.665717Z
+updated_at: 2026-06-21T19:42:24.727901Z
 parent: herdr-pluck-t3sf
 blocked_by:
 - herdr-pluck-guwf
@@ -43,3 +43,23 @@ When finalizing docs and install instructions, verify the current Herdr plugin/k
 - [`website/src/content/docs/plugins.mdx`](https://github.com/ogulcancelik/herdr/blob/main/website/src/content/docs/plugins.mdx)
 - [`website/src/content/docs/configuration.mdx`](https://github.com/ogulcancelik/herdr/blob/main/website/src/content/docs/configuration.mdx)
 - [`website/src/content/docs/cli-reference.mdx`](https://github.com/ogulcancelik/herdr/blob/main/website/src/content/docs/cli-reference.mdx)
+
+
+## Implementation Notes
+- Rewrote `README.md` for plugin users/maintainers rather than implementation history.
+- Documented Herdr requirements, build/link/install steps, the manifest action id, a sample `plugin_action` keybinding, normal usage, supported built-in patterns, clipboard tool requirements, v1 behavior, and v1 limitations.
+- Verified `herdr-plugin.toml` remains checked in with plugin id `rmarganti.herdr-pluck` and action `pluck` invoking `./target/release/herdr-pluck open`.
+- Reviewed the delivered v1 behavior against the PRD user workflow: focus pane, invoke action, see inline hints for built-in patterns, type fixed-width hint to copy, cancel with Escape/Ctrl-C, and surface clipboard-tool requirements.
+
+## Verification Results
+- `cargo fmt --all -- --check` passed.
+- `cargo test --all-features` passed.
+- `cargo clippy --all-targets --all` passed.
+- `cargo build --release` passed.
+- `ish check` passed.
+- `herdr plugin link .` succeeded.
+- `herdr plugin action list --plugin rmarganti.herdr-pluck` showed action `pluck`.
+- Manual Herdr copy smoke: created a temporary source tab containing `https://example.com/herdr-pluck-final-1782073400`, `/tmp/herdr-pluck-final`, `abcdef1234567890`, `10.20.30.40`, and `9876543210`; invoked `herdr plugin action invoke rmarganti.herdr-pluck.pluck`; confirmed the temporary picker tab rendered inline hints; typed the visible URL hint; verified `pbpaste` contained `https://example.com/herdr-pluck-final-1782073400`; confirmed the picker tab closed and focus returned to the source tab.
+- Manual Herdr Escape smoke: invoked the plugin action again, sent Escape to the picker pane, and confirmed the temporary picker tab closed with focus restored.
+- Manual Herdr Ctrl-C smoke: invoked the plugin action again, sent Ctrl-C as the control character to the picker pane, and confirmed the temporary picker tab closed with focus restored.
+- Cleaned up the temporary smoke-test tab after verification.
