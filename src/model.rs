@@ -15,7 +15,7 @@ pub struct PaneDimensions {
     pub height: u16,
 }
 
-/// Cell-space rectangle from Herdr layout or overlay rendering coordinates.
+/// Cell-space rectangle from Herdr layout or pane-local rendering coordinates.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Rect {
     pub x: u16,
