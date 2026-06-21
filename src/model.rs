@@ -1,11 +1,17 @@
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct PaneId(pub String);
 
 impl PaneId {
     pub fn new(value: impl Into<String>) -> Self {
         Self(value.into())
+    }
+}
+
+impl std::fmt::Display for PaneId {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.0.fmt(formatter)
     }
 }
 
@@ -85,6 +91,92 @@ impl SourceGeometrySnapshot {
     pub fn source_outer_rect_in_terminal(&self) -> Rect {
         self.source_outer_rect.relative_to(self.terminal_area)
     }
+}
+
+/// How pane text was captured for a picker snapshot.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum PaneTextCaptureMode {
+    ExactVisibleUnwrapped,
+    RecentUnwrappedBottomApproximation,
+    VisibleWrapped,
+}
+
+/// One source pane's Herdr-global geometry captured before creating a temporary layout tab.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SourcePaneGeometry {
+    pub pane_id: PaneId,
+    pub outer_rect: Rect,
+    pub content_rect: Rect,
+    pub content_width: u16,
+    pub content_height: u16,
+}
+
+/// Immutable source tab state needed to launch and render a layout-tab picker.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SourcePaneSnapshot {
+    pub target_pane_id: PaneId,
+    pub source_tab_id: String,
+    pub workspace_id: String,
+    pub source_panes: Vec<SourcePaneGeometry>,
+    pub target_content_width: u16,
+    pub target_content_height: u16,
+    pub logical_lines: Vec<String>,
+    pub capture_mode: PaneTextCaptureMode,
+}
+
+/// Temporary layout-tab session ids required for explicit cleanup and focus restoration.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TempTabSession {
+    pub temp_tab_id: String,
+    pub return_tab_id: String,
+    pub return_pane_id: PaneId,
+}
+
+/// Full picker launch payload passed from the action process to picker mode.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PickerSnapshot {
+    pub source: SourcePaneSnapshot,
+    pub session: TempTabSession,
+}
+
+/// Direction of a Herdr binary pane split as exposed by layout snapshots and replay commands.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum SplitDirection {
+    Right,
+    Down,
+}
+
+impl SplitDirection {
+    pub fn as_cli_arg(self) -> &'static str {
+        match self {
+            Self::Right => "right",
+            Self::Down => "down",
+        }
+    }
+}
+
+/// Binary Herdr layout tree with source pane ids preserved at leaves.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub enum LayoutNode {
+    Pane {
+        source_pane_id: PaneId,
+        rect: Rect,
+    },
+    Split {
+        direction: SplitDirection,
+        ratio: f32,
+        first: Box<LayoutNode>,
+        second: Box<LayoutNode>,
+        rect: Rect,
+    },
+}
+
+/// Replayable layout plan plus the source pane that must receive the picker.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct LayoutRecreationPlan {
+    pub root: LayoutNode,
+    pub target_source_pane_id: PaneId,
 }
 
 /// Unwrapped logical pane text lines and dimensions at the time of picker activation.

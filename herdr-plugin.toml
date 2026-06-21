@@ -12,10 +12,4 @@ command = ["cargo", "build", "--release"]
 id = "pluck"
 title = "Pluck visible token"
 contexts = ["pane", "workspace"]
-command = ["./target/release/herdr-pluck", "open-overlay"]
-
-[[panes]]
-id = "picker"
-title = "Pluck"
-placement = "overlay"
-command = ["./target/release/herdr-pluck", "pick"]
+command = ["./target/release/herdr-pluck", "open"]
