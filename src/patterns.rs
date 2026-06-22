@@ -66,14 +66,14 @@ struct MatchCandidate {
     pattern_order: usize,
 }
 
-/// Finds matches using built-ins followed by user-defined custom patterns.
+/// Finds matches using user-defined custom patterns followed by built-ins.
 pub fn find_matches(
     lines: &[String],
     custom_patterns: &[CustomPatternDefinition],
 ) -> Vec<MatchSpan> {
-    let mut patterns = Vec::with_capacity(built_in_patterns().len() + custom_patterns.len());
-    patterns.extend(built_in_patterns().iter());
+    let mut patterns = Vec::with_capacity(custom_patterns.len() + built_in_patterns().len());
     patterns.extend(custom_patterns.iter().map(|pattern| &pattern.0));
+    patterns.extend(built_in_patterns().iter());
     find_matches_with_patterns(lines, &patterns)
 }
 
@@ -598,7 +598,7 @@ mod tests {
     }
 
     #[test]
-    fn custom_patterns_are_appended_after_builtins() {
+    fn custom_patterns_are_searched_before_builtins() {
         let custom = vec![CustomPatternDefinition::compile("ticket", 25, r#"ABC-[0-9]+"#).unwrap()];
         let matches = find_matches(&lines(["fix ABC-1234"]), &custom);
 

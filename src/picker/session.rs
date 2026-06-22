@@ -150,6 +150,7 @@ mod tests {
                 return_tab_id: "t1".to_string(),
                 return_pane_id: PaneId::new("p1"),
             },
+            custom_patterns: Vec::new(),
         }
     }
 

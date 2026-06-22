@@ -4,6 +4,7 @@ pub mod executor;
 pub mod layout;
 pub mod snapshot;
 
+use crate::config::resolve_pattern_specs;
 use crate::herdr::commands::ProcessCommandRunner;
 use crate::herdr::context::HerdrContext;
 use crate::herdr::executor::{cleanup_session, launch_layout_tab_picker, run_snapshot_picker};
@@ -41,7 +42,15 @@ impl HerdrAdapter {
     pub fn open_layout_tab_picker(&self, target: &PaneId) -> Result<()> {
         let binary_path = std::env::current_exe().context("failed to locate herdr-pluck binary")?;
         let mut runner = ProcessCommandRunner;
-        launch_layout_tab_picker(&self.context.herdr_bin, &mut runner, target, &binary_path)?;
+        let focused_pane_cwd = self.context.focused_pane_cwd();
+        let custom_patterns = resolve_pattern_specs(focused_pane_cwd.as_deref());
+        launch_layout_tab_picker(
+            &self.context.herdr_bin,
+            &mut runner,
+            target,
+            &binary_path,
+            custom_patterns,
+        )?;
         Ok(())
     }
 

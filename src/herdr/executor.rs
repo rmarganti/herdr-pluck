@@ -6,7 +6,7 @@ use crate::herdr::snapshot::{
     build_source_snapshot, choose_picker_snapshot_transport, inert_pane_command, picker_command,
     remove_snapshot_file, write_snapshot_file, SnapshotFile, SnapshotTransport,
 };
-use crate::model::{LayoutNode, PaneId, PickerSnapshot, TempTabSession};
+use crate::model::{LayoutNode, PaneId, PatternSpec, PickerSnapshot, TempTabSession};
 use crate::viewport::map_visible_viewport;
 use anyhow::{anyhow, Context, Result};
 use std::collections::HashMap;
@@ -27,6 +27,7 @@ pub fn launch_layout_tab_picker<R: CommandRunner>(
     runner: &mut R,
     target: &PaneId,
     binary_path: &Path,
+    custom_patterns: Vec<PatternSpec>,
 ) -> Result<LayoutTabLaunch> {
     let layout_bytes = {
         let mut commands = HerdrCommands::new(herdr_bin, runner);
@@ -97,6 +98,7 @@ pub fn launch_layout_tab_picker<R: CommandRunner>(
         logical_lines,
         Some(visible_viewport),
         session.clone(),
+        custom_patterns,
     )?;
     let snapshot_file = match choose_picker_snapshot_transport(&snapshot)? {
         SnapshotTransport::TempFile => write_snapshot_file(&snapshot)?,
@@ -378,6 +380,11 @@ mod tests {
             &mut runner,
             &PaneId::new("p2"),
             Path::new("/bin/herdr-pluck"),
+            vec![PatternSpec {
+                name: "custom".to_string(),
+                regex: "CUSTOM-[0-9]+".to_string(),
+                priority: 25,
+            }],
         )
         .unwrap();
 
@@ -393,6 +400,9 @@ mod tests {
                 "tp2".to_string(),
                 expected_picker_command.clone(),
             ]));
+        let snapshot = crate::herdr::snapshot::read_snapshot_file(&launch.snapshot_file.path)
+            .expect("snapshot should be readable");
+        assert_eq!(snapshot.custom_patterns[0].name, "custom");
         let _ = std::fs::remove_file(launch.snapshot_file.path);
     }
 
@@ -406,6 +416,7 @@ mod tests {
             &mut runner,
             &PaneId::new("p1"),
             Path::new("/bin/herdr-pluck"),
+            Vec::new(),
         )
         .unwrap_err();
 
@@ -432,6 +443,7 @@ mod tests {
             &mut runner,
             &PaneId::new("p2"),
             Path::new("/bin/herdr-pluck"),
+            Vec::new(),
         )
         .unwrap();
 
@@ -478,6 +490,7 @@ mod tests {
             &mut runner,
             &PaneId::new("p2"),
             Path::new("/bin/herdr-pluck"),
+            Vec::new(),
         )
         .unwrap_err();
 

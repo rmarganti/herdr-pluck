@@ -1,6 +1,6 @@
 use crate::herdr::layout::{derive_source_geometry, derive_source_pane_geometries, LayoutSnapshot};
 use crate::model::{
-    PaneId, PaneTextCaptureMode, PickerSnapshot, SourcePaneSnapshot, TempTabSession,
+    PaneId, PaneTextCaptureMode, PatternSpec, PickerSnapshot, SourcePaneSnapshot, TempTabSession,
     VisibleViewport,
 };
 use anyhow::{Context, Result};
@@ -68,6 +68,7 @@ pub fn build_source_snapshot(
     logical_lines: Vec<String>,
     visible_viewport: Option<VisibleViewport>,
     session: TempTabSession,
+    custom_patterns: Vec<PatternSpec>,
 ) -> Result<PickerSnapshot> {
     let source_tab_id = layout
         .tab_id
@@ -100,6 +101,7 @@ pub fn build_source_snapshot(
             capture_mode: PaneTextCaptureMode::ExactVisibleUnwrapped,
         },
         session,
+        custom_patterns,
     })
 }
 
@@ -216,6 +218,7 @@ mod tests {
                 return_tab_id: "t1".to_string(),
                 return_pane_id: PaneId::new("p1"),
             },
+            custom_patterns: Vec::new(),
         }
     }
 

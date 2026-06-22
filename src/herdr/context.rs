@@ -1,6 +1,7 @@
 use crate::model::PaneId;
 use serde_json::Value;
 use std::env;
+use std::path::PathBuf;
 
 pub const HERDR_PLUCK_TARGET_PANE_ID: &str = "HERDR_PLUCK_TARGET_PANE_ID";
 pub const HERDR_PLUCK_SNAPSHOT_JSON: &str = "HERDR_PLUCK_SNAPSHOT_JSON";
@@ -38,8 +39,7 @@ impl HerdrContext {
             return Some(PaneId::new(pane_id.clone()));
         }
 
-        let context = self.context_json.as_ref()?;
-        let value: Value = serde_json::from_str(context).ok()?;
+        let value = self.context_value()?;
         find_string_at_paths(
             &value,
             &[
@@ -52,6 +52,26 @@ impl HerdrContext {
             ],
         )
         .map(PaneId::new)
+    }
+
+    /// Working directory associated with the focused source pane, if Herdr provided one.
+    pub fn focused_pane_cwd(&self) -> Option<PathBuf> {
+        let value = self.context_value()?;
+        find_string_at_paths(
+            &value,
+            &[
+                &["focused_pane", "cwd"],
+                &["pane", "cwd"],
+                &["focused_pane_cwd"],
+                &["workspace_cwd"],
+            ],
+        )
+        .map(PathBuf::from)
+    }
+
+    fn context_value(&self) -> Option<Value> {
+        let context = self.context_json.as_ref()?;
+        serde_json::from_str(context).ok()
     }
 }
 
@@ -102,5 +122,20 @@ mod tests {
         };
 
         assert_eq!(context.target_pane(), Some(PaneId::new("from-env")));
+    }
+
+    #[test]
+    fn extracts_focused_pane_cwd_from_context_json() {
+        let context = HerdrContext {
+            herdr_bin: "herdr".to_string(),
+            plugin_id: None,
+            context_json: Some(r#"{"focused_pane_cwd":"/repo/subdir"}"#.to_string()),
+            pane_id: None,
+        };
+
+        assert_eq!(
+            context.focused_pane_cwd(),
+            Some(PathBuf::from("/repo/subdir"))
+        );
     }
 }

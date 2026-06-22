@@ -85,7 +85,7 @@ Custom global patterns can be added in the plugin config directory:
 
 ```bash
 CONFIG_DIR="$(herdr plugin config-dir rmarganti.herdr-pluck)"
-$EDITOR "$CONFIG_DIR/patterns.toml"
+$EDITOR "$CONFIG_DIR/config.toml"
 ```
 
 Example:
@@ -96,6 +96,16 @@ name = "jira"
 regex = "\\b[A-Z][A-Z0-9]+-[0-9]+\\b"
 priority = 25
 ```
+
+Project-local patterns are also enabled by default. Herdr Pluck looks for `.herdr-pluck.toml` from the focused pane's working directory up to the Git root. Disable or customize this in the global config:
+
+```toml
+[project]
+patterns = true
+pattern_files = [".herdr-pluck.toml"]
+```
+
+Project-local config files use the same `[[patterns]]` shape as global config. Pattern precedence for equal-priority overlaps is project-local, then global, then built-ins.
 
 `regex` uses Rust regular expression syntax. If a named capture called `match` is present, only that capture is copied; otherwise the whole regex match is copied:
 

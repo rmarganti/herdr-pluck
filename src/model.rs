@@ -152,11 +152,21 @@ pub struct TempTabSession {
     pub return_pane_id: PaneId,
 }
 
+/// Serializable regex pattern config resolved before the picker pane starts.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PatternSpec {
+    pub name: String,
+    pub regex: String,
+    pub priority: u16,
+}
+
 /// Full picker launch payload passed from the action process to picker mode.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PickerSnapshot {
     pub source: SourcePaneSnapshot,
     pub session: TempTabSession,
+    #[serde(default)]
+    pub custom_patterns: Vec<PatternSpec>,
 }
 
 /// Direction of a Herdr binary pane split as exposed by layout snapshots and replay commands.
