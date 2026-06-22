@@ -8,7 +8,7 @@ const KUBERNETES_RESOURCE_KINDS: &str = "deployment.app|binding|componentstatuse
 
 #[derive(Debug)]
 struct PatternDefinition {
-    name: &'static str,
+    name: String,
     /// Match precedence where lower numbers beat higher numbers.
     /// ie. `1` is the number one priority, while `5` is a lower priority
     priority: u16,
@@ -16,12 +16,46 @@ struct PatternDefinition {
 }
 
 impl PatternDefinition {
-    fn compile(name: &'static str, priority: u16, pattern: &str) -> Self {
-        Self {
-            name,
+    fn compile(name: impl Into<String>, priority: u16, pattern: &str) -> Self {
+        Self::try_compile(name, priority, pattern)
+            .expect("built-in Herdr Pluck pattern must compile")
+    }
+
+    fn try_compile(
+        name: impl Into<String>,
+        priority: u16,
+        pattern: &str,
+    ) -> Result<Self, regex::Error> {
+        Ok(Self {
+            name: name.into(),
             priority,
-            regex: Regex::new(pattern).expect("built-in Herdr Pluck pattern must compile"),
-        }
+            regex: Regex::new(pattern)?,
+        })
+    }
+}
+
+/// User-defined regex pattern loaded from Herdr Pluck config.
+#[derive(Debug)]
+pub struct CustomPatternDefinition(PatternDefinition);
+
+impl CustomPatternDefinition {
+    /// Compiles a user pattern, preserving regex diagnostics for config errors.
+    pub fn compile(
+        name: impl Into<String>,
+        priority: u16,
+        pattern: &str,
+    ) -> Result<Self, regex::Error> {
+        PatternDefinition::try_compile(name, priority, pattern).map(Self)
+    }
+
+    /// User-visible pattern name.
+    pub fn name(&self) -> &str {
+        &self.0.name
+    }
+
+    /// Match precedence where lower numbers are higher priority.
+    pub fn priority(&self) -> u16 {
+        self.0.priority
     }
 }
 
@@ -32,12 +66,15 @@ struct MatchCandidate {
     pattern_order: usize,
 }
 
-/// Finds accepted built-in pattern matches in first-visible order.
-///
-/// Matching runs on unwrapped logical lines. Returned spans are all accepted visible occurrences;
-/// duplicate copied texts are intentionally preserved for the hint engine to deduplicate later.
-pub fn find_matches(lines: &[String]) -> Vec<MatchSpan> {
-    find_matches_with_patterns(lines, built_in_patterns())
+/// Finds matches using built-ins followed by user-defined custom patterns.
+pub fn find_matches(
+    lines: &[String],
+    custom_patterns: &[CustomPatternDefinition],
+) -> Vec<MatchSpan> {
+    let mut patterns = Vec::with_capacity(built_in_patterns().len() + custom_patterns.len());
+    patterns.extend(built_in_patterns().iter());
+    patterns.extend(custom_patterns.iter().map(|pattern| &pattern.0));
+    find_matches_with_patterns(lines, &patterns)
 }
 
 fn built_in_patterns() -> &'static [PatternDefinition] {
@@ -79,7 +116,7 @@ fn built_in_patterns() -> &'static [PatternDefinition] {
     })
 }
 
-fn find_matches_with_patterns(lines: &[String], patterns: &[PatternDefinition]) -> Vec<MatchSpan> {
+fn find_matches_with_patterns(lines: &[String], patterns: &[&PatternDefinition]) -> Vec<MatchSpan> {
     let candidates = collect_candidates(lines, patterns);
     let mut accepted = resolve_overlaps(candidates);
     accepted.sort_by(|left, right| {
@@ -92,7 +129,7 @@ fn find_matches_with_patterns(lines: &[String], patterns: &[PatternDefinition]) 
 }
 
 /// Collects all candidate matches for all patterns with their pattern definition order for tie-breaking.
-fn collect_candidates(lines: &[String], patterns: &[PatternDefinition]) -> Vec<MatchCandidate> {
+fn collect_candidates(lines: &[String], patterns: &[&PatternDefinition]) -> Vec<MatchCandidate> {
     let mut candidates = Vec::new();
 
     for (line_idx, line) in lines.iter().enumerate() {
@@ -108,7 +145,7 @@ fn collect_candidates(lines: &[String], patterns: &[PatternDefinition]) -> Vec<M
                         start: regex_match.start(),
                         end: regex_match.end(),
                         text: regex_match.as_str().to_string(),
-                        pattern: pattern.name.to_string(),
+                        pattern: pattern.name.clone(),
                         priority: pattern.priority,
                     },
                     pattern_order,
@@ -150,6 +187,11 @@ fn resolve_overlaps(mut candidates: Vec<MatchCandidate>) -> Vec<MatchSpan> {
 mod tests {
     use super::*;
 
+    fn find_matches_with_defaults_only(lines: &[String]) -> Vec<MatchSpan> {
+        let patterns = built_in_patterns().iter().collect::<Vec<_>>();
+        find_matches_with_patterns(lines, &patterns)
+    }
+
     fn lines<const N: usize>(values: [&str; N]) -> Vec<String> {
         values.into_iter().map(String::from).collect()
     }
@@ -158,9 +200,13 @@ mod tests {
         PatternDefinition::compile(name, priority, pattern)
     }
 
+    fn test_patterns(patterns: &[PatternDefinition]) -> Vec<&PatternDefinition> {
+        patterns.iter().collect()
+    }
+
     #[test]
     fn finds_url_schemes() {
-        let matches = find_matches(&lines([
+        let matches = find_matches_with_defaults_only(&lines([
             "https://example.com http://example.com git@github.com:org/repo.git",
             "git://host/repo ssh://host/path ftp://host/path file:///tmp/file",
         ]));
@@ -186,7 +232,7 @@ mod tests {
 
     #[test]
     fn url_stops_at_delimiters() {
-        let matches = find_matches(&lines([
+        let matches = find_matches_with_defaults_only(&lines([
             "(https://a.test/path) 'https://b.test' \"https://c.test\"",
         ]));
         let urls: Vec<&str> = matches
@@ -203,7 +249,8 @@ mod tests {
 
     #[test]
     fn url_preserves_non_delimiter_trailing_punctuation() {
-        let matches = find_matches(&lines(["see https://example.com/path., next"]));
+        let matches =
+            find_matches_with_defaults_only(&lines(["see https://example.com/path., next"]));
         let url = matches.iter().find(|span| span.pattern == "url").unwrap();
 
         assert_eq!(url.text, "https://example.com/path.,");
@@ -211,7 +258,8 @@ mod tests {
 
     #[test]
     fn finds_style_paths() {
-        let matches = find_matches(&lines(["/tmp/foo/bar src/main.rs foo/bar dir/sub/"]));
+        let matches =
+            find_matches_with_defaults_only(&lines(["/tmp/foo/bar src/main.rs foo/bar dir/sub/"]));
         let paths: Vec<&str> = matches
             .iter()
             .filter(|span| span.pattern == "path")
@@ -226,7 +274,7 @@ mod tests {
 
     #[test]
     fn finds_uppercase_and_lowercase_uuids() {
-        let matches = find_matches(&lines([
+        let matches = find_matches_with_defaults_only(&lines([
             "ids 123e4567-e89b-12d3-a456-426614174000 123E4567-E89B-12D3-A456-426614174000",
         ]));
         let uuids: Vec<&str> = matches
@@ -246,7 +294,7 @@ mod tests {
 
     #[test]
     fn finds_git_sha_lengths_with_uppercase_support() {
-        let matches = find_matches(&lines([
+        let matches = find_matches_with_defaults_only(&lines([
             "sha abcDEF1 abcdef1234567890abcdef1234567890abcdef12 abcdef1234567890abcdef1234567890abcdef123",
         ]));
         let shas: Vec<&str> = matches
@@ -263,7 +311,8 @@ mod tests {
 
     #[test]
     fn finds_loose_ipv4() {
-        let matches = find_matches(&lines(["hosts 192.168.1.10 999.999.999.999"]));
+        let matches =
+            find_matches_with_defaults_only(&lines(["hosts 192.168.1.10 999.999.999.999"]));
         let ips: Vec<&str> = matches
             .iter()
             .filter(|span| span.pattern == "ipv4")
@@ -275,7 +324,7 @@ mod tests {
 
     #[test]
     fn finds_long_numbers_inside_text() {
-        let matches = find_matches(&lines(["zzz1234zzz issue-5678 foo_9012"]));
+        let matches = find_matches_with_defaults_only(&lines(["zzz1234zzz issue-5678 foo_9012"]));
         let numbers: Vec<&str> = matches
             .iter()
             .filter(|span| span.pattern == "number")
@@ -287,7 +336,8 @@ mod tests {
 
     #[test]
     fn finds_hex_literals_before_numeric_submatches() {
-        let matches = find_matches(&lines(["values 0xdeadBEEF 0x1234 not0xabc"]));
+        let matches =
+            find_matches_with_defaults_only(&lines(["values 0xdeadBEEF 0x1234 not0xabc"]));
         let hexes: Vec<&str> = matches
             .iter()
             .filter(|span| span.pattern == "hex")
@@ -302,7 +352,7 @@ mod tests {
 
     #[test]
     fn finds_kubernetes_resource_references() {
-        let matches = find_matches(&lines([
+        let matches = find_matches_with_defaults_only(&lines([
             "kubectl get pod/nginx-123 service/api deployment.apps/frontend",
         ]));
         let resources: Vec<&str> = matches
@@ -319,7 +369,7 @@ mod tests {
 
     #[test]
     fn finds_deployment_managed_kubernetes_pod_names() {
-        let matches = find_matches(&lines([
+        let matches = find_matches_with_defaults_only(&lines([
             "pods nginx-deployment-66b6c48dd5-7xb2r api-abcde-12345 bad-pod-abcde-aeiou",
         ]));
         let pods: Vec<&str> = matches
@@ -333,7 +383,7 @@ mod tests {
 
     #[test]
     fn finds_git_status_paths_with_named_capture() {
-        let matches = find_matches(&lines([
+        let matches = find_matches_with_defaults_only(&lines([
             "modified:   src/main.rs",
             "deleted by us: docs/old.md",
             "new file:   README.md",
@@ -355,7 +405,9 @@ mod tests {
 
     #[test]
     fn finds_git_status_branch_name_with_named_capture() {
-        let matches = find_matches(&lines(["Your branch is up to date with 'origin/main'."]));
+        let matches = find_matches_with_defaults_only(&lines([
+            "Your branch is up to date with 'origin/main'.",
+        ]));
         let branch = matches
             .iter()
             .find(|span| span.pattern == "git-status-branch")
@@ -366,7 +418,8 @@ mod tests {
 
     #[test]
     fn finds_diff_paths_with_named_capture() {
-        let matches = find_matches(&lines(["--- a/src/lib.rs", "+++ b/src/lib.rs"]));
+        let matches =
+            find_matches_with_defaults_only(&lines(["--- a/src/lib.rs", "+++ b/src/lib.rs"]));
         let diff_paths: Vec<&str> = matches
             .iter()
             .filter(|span| span.pattern == "diff")
@@ -378,7 +431,8 @@ mod tests {
 
     #[test]
     fn expanded_patterns_win_over_lower_priority_path_and_number_overlaps() {
-        let matches = find_matches(&lines(["+++ b/src/lib.rs", "pod/nginx 0x1234"]));
+        let matches =
+            find_matches_with_defaults_only(&lines(["+++ b/src/lib.rs", "pod/nginx 0x1234"]));
         let patterns: Vec<&str> = matches.iter().map(|span| span.pattern.as_str()).collect();
 
         assert_eq!(patterns, vec!["diff", "kubernetes", "hex"]);
@@ -386,7 +440,8 @@ mod tests {
 
     #[test]
     fn expanded_patterns_avoid_common_false_positive_boundaries() {
-        let matches = find_matches(&lines(["not0xabc serviceable api-abcde-aeiou"]));
+        let matches =
+            find_matches_with_defaults_only(&lines(["not0xabc serviceable api-abcde-aeiou"]));
         let expanded: Vec<&MatchSpan> = matches
             .iter()
             .filter(|span| {
@@ -403,7 +458,8 @@ mod tests {
     #[test]
     fn named_match_capture_defines_text_and_range() {
         let patterns = vec![test_pattern("status", 10, r#"status=\[(?<match>[^\]]+)\]"#)];
-        let matches = find_matches_with_patterns(&lines(["status=[copy-me]"]), &patterns);
+        let matches =
+            find_matches_with_patterns(&lines(["status=[copy-me]"]), &test_patterns(&patterns));
 
         assert_eq!(matches.len(), 1);
         assert_eq!(matches[0].text, "copy-me");
@@ -414,7 +470,8 @@ mod tests {
     #[test]
     fn full_match_is_used_without_named_capture() {
         let patterns = vec![test_pattern("word", 10, r#"copy-me"#)];
-        let matches = find_matches_with_patterns(&lines(["xx copy-me yy"]), &patterns);
+        let matches =
+            find_matches_with_patterns(&lines(["xx copy-me yy"]), &test_patterns(&patterns));
 
         assert_eq!(matches.len(), 1);
         assert_eq!(matches[0].text, "copy-me");
@@ -428,7 +485,8 @@ mod tests {
             test_pattern("wrapped", 10, r#"prefix-(?<match>abc)-suffix"#),
             test_pattern("prefix", 20, r#"prefix"#),
         ];
-        let matches = find_matches_with_patterns(&lines(["prefix-abc-suffix"]), &patterns);
+        let matches =
+            find_matches_with_patterns(&lines(["prefix-abc-suffix"]), &test_patterns(&patterns));
         let texts: Vec<&str> = matches.iter().map(|span| span.text.as_str()).collect();
 
         assert_eq!(texts, vec!["prefix", "abc"]);
@@ -436,7 +494,8 @@ mod tests {
 
     #[test]
     fn url_wins_over_path_inside_url() {
-        let matches = find_matches(&lines(["open https://example.com/src/main.rs"]));
+        let matches =
+            find_matches_with_defaults_only(&lines(["open https://example.com/src/main.rs"]));
 
         assert_eq!(matches.len(), 1);
         assert_eq!(matches[0].pattern, "url");
@@ -445,7 +504,8 @@ mod tests {
 
     #[test]
     fn uuid_wins_over_sha_and_number_submatches() {
-        let matches = find_matches(&lines(["id 123e4567-e89b-12d3-a456-426614174000"]));
+        let matches =
+            find_matches_with_defaults_only(&lines(["id 123e4567-e89b-12d3-a456-426614174000"]));
 
         assert_eq!(matches.len(), 1);
         assert_eq!(matches[0].pattern, "uuid");
@@ -453,7 +513,7 @@ mod tests {
 
     #[test]
     fn git_sha_wins_over_number_submatch() {
-        let matches = find_matches(&lines(["sha abc1234"]));
+        let matches = find_matches_with_defaults_only(&lines(["sha abc1234"]));
 
         assert_eq!(matches.len(), 1);
         assert_eq!(matches[0].pattern, "git-sha");
@@ -466,7 +526,7 @@ mod tests {
             test_pattern("short-high", 10, r#"abc"#),
             test_pattern("long-low", 20, r#"abcdef"#),
         ];
-        let matches = find_matches_with_patterns(&lines(["abcdef"]), &patterns);
+        let matches = find_matches_with_patterns(&lines(["abcdef"]), &test_patterns(&patterns));
 
         assert_eq!(matches.len(), 1);
         assert_eq!(matches[0].pattern, "short-high");
@@ -478,7 +538,7 @@ mod tests {
             test_pattern("short", 10, r#"abc"#),
             test_pattern("long", 10, r#"abcdef"#),
         ];
-        let matches = find_matches_with_patterns(&lines(["abcdef"]), &patterns);
+        let matches = find_matches_with_patterns(&lines(["abcdef"]), &test_patterns(&patterns));
 
         assert_eq!(matches.len(), 1);
         assert_eq!(matches[0].pattern, "long");
@@ -487,7 +547,7 @@ mod tests {
     #[test]
     fn earlier_position_wins_within_same_priority_and_length() {
         let patterns = vec![test_pattern("word", 10, r#"abc"#)];
-        let matches = find_matches_with_patterns(&lines(["abc abc"]), &patterns);
+        let matches = find_matches_with_patterns(&lines(["abc abc"]), &test_patterns(&patterns));
 
         assert_eq!(matches.len(), 2);
         assert_eq!(matches[0].start, 0);
@@ -500,7 +560,7 @@ mod tests {
             test_pattern("first", 10, r#"abc"#),
             test_pattern("second", 10, r#"abc"#),
         ];
-        let matches = find_matches_with_patterns(&lines(["abc"]), &patterns);
+        let matches = find_matches_with_patterns(&lines(["abc"]), &test_patterns(&patterns));
 
         assert_eq!(matches.len(), 1);
         assert_eq!(matches[0].pattern, "first");
@@ -508,7 +568,7 @@ mod tests {
 
     #[test]
     fn output_order_is_visible_order_not_acceptance_priority() {
-        let matches = find_matches(&lines(["1234", "https://example.com"]));
+        let matches = find_matches_with_defaults_only(&lines(["1234", "https://example.com"]));
         let texts: Vec<&str> = matches.iter().map(|span| span.text.as_str()).collect();
 
         assert_eq!(texts, vec!["1234", "https://example.com"]);
@@ -516,7 +576,7 @@ mod tests {
 
     #[test]
     fn duplicate_copied_text_occurrences_are_preserved() {
-        let matches = find_matches(&lines(["/tmp/foo /tmp/foo"]));
+        let matches = find_matches_with_defaults_only(&lines(["/tmp/foo /tmp/foo"]));
         let paths: Vec<&MatchSpan> = matches
             .iter()
             .filter(|span| span.pattern == "path")
@@ -530,10 +590,35 @@ mod tests {
     #[test]
     fn overlap_is_line_local() {
         let patterns = vec![test_pattern("same", 10, r#"abc"#)];
-        let matches = find_matches_with_patterns(&lines(["abc", "abc"]), &patterns);
+        let matches = find_matches_with_patterns(&lines(["abc", "abc"]), &test_patterns(&patterns));
 
         assert_eq!(matches.len(), 2);
         assert_eq!(matches[0].line, 0);
         assert_eq!(matches[1].line, 1);
+    }
+
+    #[test]
+    fn custom_patterns_are_appended_after_builtins() {
+        let custom = vec![CustomPatternDefinition::compile("ticket", 25, r#"ABC-[0-9]+"#).unwrap()];
+        let matches = find_matches(&lines(["fix ABC-1234"]), &custom);
+
+        assert!(matches
+            .iter()
+            .any(|span| span.pattern == "ticket" && span.text == "ABC-1234"));
+    }
+
+    #[test]
+    fn custom_pattern_priority_participates_in_overlap_resolution() {
+        let custom = vec![CustomPatternDefinition::compile(
+            "command",
+            12,
+            r#"git branch -D [A-Za-z0-9._/-]+"#,
+        )
+        .unwrap()];
+        let matches = find_matches(&lines(["run git branch -D feature/foo"]), &custom);
+
+        assert_eq!(matches.len(), 1);
+        assert_eq!(matches[0].pattern, "command");
+        assert_eq!(matches[0].text, "git branch -D feature/foo");
     }
 }

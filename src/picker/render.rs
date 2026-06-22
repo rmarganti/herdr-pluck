@@ -1,3 +1,4 @@
+use crate::config::load_global_custom_patterns;
 use crate::hints::{assign_hints, HintAssignments};
 use crate::model::{PickerOutcome, PickerSnapshot, RenderLine, RenderSpan, RenderStyle};
 use crate::patterns::find_matches;
@@ -35,8 +36,10 @@ pub fn build_picker_view(snapshot: &PickerSnapshot) -> PickerView {
         .as_ref()
         .map(|viewport| viewport.logical_lines.as_slice())
         .unwrap_or(&snapshot.source.logical_lines);
-    let matches = find_matches(logical_lines);
+    let custom_patterns = load_global_custom_patterns();
+    let matches = find_matches(logical_lines, &custom_patterns);
     let assignments = assign_hints(matches.clone());
+
     let lines = if assignments.is_empty() {
         no_matches_view(
             snapshot.source.target_content_width,

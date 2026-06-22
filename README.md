@@ -9,9 +9,9 @@ Invoke the plugin while a pane is focused, type the displayed hint for the token
 - Herdr 0.7.0 or newer
 - Rust/Cargo to build from source
 - A system clipboard command:
-  - macOS: `pbcopy`
-  - Linux Wayland: `wl-copy`
-  - Linux X11: `xclip` or `xsel`
+    - macOS: `pbcopy`
+    - Linux Wayland: `wl-copy`
+    - Linux X11: `xclip` or `xsel`
 
 ## Install
 
@@ -81,29 +81,36 @@ Herdr Pluck recognizes these built-in token types, in priority order:
 9. IPv4 addresses
 10. Long numeric identifiers
 
-The expanded pattern set is always enabled for v1.1-style compatibility with `tmux-fingers`; user-configurable regex sets remain out of scope for v1.
+Custom global patterns can be added in the plugin config directory:
+
+```bash
+CONFIG_DIR="$(herdr plugin config-dir rmarganti.herdr-pluck)"
+$EDITOR "$CONFIG_DIR/patterns.toml"
+```
+
+Example:
+
+```toml
+[[patterns]]
+name = "jira"
+regex = "\\b[A-Z][A-Z0-9]+-[0-9]+\\b"
+priority = 25
+```
+
+`regex` uses Rust regular expression syntax. If a named capture called `match` is present, only that capture is copied; otherwise the whole regex match is copied:
+
+```toml
+[[patterns]]
+name = "trace-id"
+regex = "trace_id=(?<match>[A-Za-z0-9_-]+)"
+priority = 25
+```
+
+For `trace_id=abc123`, this pattern highlights and copies only `abc123`.
+
+Lower `priority` values win overlapping matches. If omitted, custom pattern priority defaults to `25`.
 
 When identical text appears more than once, every visible occurrence shows the same hint and copies the same text.
-
-## Behavior and limits
-
-- Hints are keyboard-only and fixed-width: one character for small match sets, two characters for larger match sets.
-- Hint characters replace the beginning of matched text on screen so pane geometry stays aligned.
-- Matching is based on visible pane content and handles soft-wrapped tokens such as long URLs.
-- The picker renders a simplified view instead of preserving the source pane's original colors.
-- v1 supports up to 676 unique copied texts in one picker view.
-- Enter is ignored while the picker is active.
-- Invalid full-width hints clear the typed hint buffer so you can try again.
-
-## Not in v1
-
-- Mouse selection
-- OSC52 clipboard copying
-- Custom regex configuration
-- Non-copy actions such as opening URLs or jumping to text
-- Multi-select
-- Preserving original ANSI colors/styles
-- Windows support
 
 ## Troubleshooting
 

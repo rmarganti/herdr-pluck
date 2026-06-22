@@ -1,5 +1,6 @@
 pub mod cli;
 pub mod clipboard;
+pub mod config;
 pub mod herdr;
 pub mod hints;
 pub mod model;

@@ -1,6 +1,7 @@
 use crate::model::{PaneId, SplitDirection};
 use anyhow::{anyhow, Context, Result};
 use serde::Deserialize;
+use std::path::PathBuf;
 use std::process::Command;
 
 /// Output captured from a Herdr CLI command.
@@ -135,6 +136,13 @@ impl<'a, R: CommandRunner> HerdrCommands<'a, R> {
         Ok(())
     }
 
+    /// Returns Herdr's stable user-editable config directory for an installed plugin.
+    pub fn plugin_config_dir(&mut self, plugin_id: &str) -> Result<PathBuf> {
+        let stdout = self.run_checked(vec!["plugin", "config-dir", plugin_id])?;
+        let path = String::from_utf8(stdout).context("plugin config-dir output was not UTF-8")?;
+        Ok(PathBuf::from(path.trim()))
+    }
+
     fn run_checked(&mut self, args: Vec<&str>) -> Result<Vec<u8>> {
         self.run_checked_owned(args.into_iter().map(str::to_string).collect())
     }
@@ -240,5 +248,20 @@ pub mod tests {
 
         assert_eq!(response.tab.tab_id, "w:t2");
         assert_eq!(response.root_pane.pane_id, "w:p2");
+    }
+
+    #[test]
+    fn plugin_config_dir_returns_trimmed_path() {
+        let mut runner = FakeRunner::default();
+        runner.push_stdout("/tmp/plugin-config\n");
+        let mut commands = HerdrCommands::new("herdr", &mut runner);
+
+        let path = commands.plugin_config_dir("example.plugin").unwrap();
+
+        assert_eq!(path, PathBuf::from("/tmp/plugin-config"));
+        assert_eq!(
+            runner.calls[0],
+            vec!["plugin", "config-dir", "example.plugin"]
+        );
     }
 }
