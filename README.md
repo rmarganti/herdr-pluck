@@ -9,7 +9,9 @@ Invoke the plugin while a pane is focused, type the displayed hint for the token
 ## Requirements
 
 - Herdr 0.7.0 or newer
-- Rust/Cargo to build from source
+- For release installs, a download tool:
+    - `curl` or `wget`
+- Rust/Cargo only when developing locally or installing an unreleased ref without a matching prebuilt binary
 - A system clipboard command:
     - macOS: `pbcopy`
     - Linux Wayland: `wl-copy`
@@ -23,16 +25,22 @@ From the remote repository:
 herdr plugin install rmarganti/herdr-pluck
 ```
 
+Published releases provide prebuilt binaries for these targets:
+
+- macOS Apple Silicon: `aarch64-apple-darwin`
+- Linux x86_64: `x86_64-unknown-linux-musl`
+
 To install a specific branch, tag, or commit, pass `--ref`:
 
 ```bash
 herdr plugin install rmarganti/herdr-pluck --ref main
 ```
 
+When the checked out plugin source matches a published release tag, install downloads the matching GitHub Release asset. Unreleased branches and commits fall back to a local Cargo build when Rust is available.
+
 From this checkout:
 
 ```bash
-cargo build --release
 herdr plugin link .
 ```
 
@@ -136,14 +144,20 @@ Lower `priority` values win overlapping matches. If omitted, custom pattern prio
 
 When identical text appears more than once, every visible occurrence shows the same hint and copies the same text.
 
+## Releasing binaries
+
+Tag releases as `vX.Y.Z`. GitHub Actions validates the crate, builds release archives, and uploads platform binaries to the matching GitHub Release.
+
 ## Troubleshooting
 
-If invoking the action does nothing useful, check that the plugin is linked and the release binary exists:
+If invoking the action does nothing useful, check that the plugin is linked and the installed binary exists:
 
 ```bash
-cargo build --release
 herdr plugin link .
+ls -l ./bin/herdr-pluck
 herdr plugin action list --plugin rmarganti.herdr-pluck
 ```
+
+If you are installing an unreleased ref, make sure either a matching release asset exists for the plugin version or Rust/Cargo is available for the local fallback build.
 
 If copying fails, install one of the supported clipboard tools for your platform and try again.
