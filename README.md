@@ -11,7 +11,7 @@ Invoke the plugin while a pane is focused, type the displayed hint for the token
 - Herdr 0.7.0 or newer
 - For release installs, a download tool:
     - `curl` or `wget`
-- Rust/Cargo only when developing locally or installing an unreleased ref without a matching prebuilt binary
+- Rust/Cargo only when forcing a source build or when no matching prebuilt binary is available
 - A system clipboard command:
     - macOS: `pbcopy`
     - Linux Wayland: `wl-copy`
@@ -36,12 +36,18 @@ To install a specific branch, tag, or commit, pass `--ref`:
 herdr plugin install rmarganti/herdr-pluck --ref main
 ```
 
-When the checked out plugin source matches a published release tag, install downloads the matching GitHub Release asset. Unreleased branches and commits fall back to a local Cargo build when Rust is available.
+Install first downloads the GitHub Release asset matching the version in `herdr-plugin.toml`. If that asset is unavailable, it falls back to a local Cargo build when Rust is available.
 
 From this checkout:
 
 ```bash
 herdr plugin link .
+```
+
+By default, linking also installs the prebuilt binary matching `herdr-plugin.toml`. To build the checked-out source instead:
+
+```bash
+HERDR_PLUCK_BUILD_FROM_SOURCE=1 herdr plugin link .
 ```
 
 Verify Herdr can see the action:
@@ -158,6 +164,6 @@ ls -l ./bin/herdr-pluck
 herdr plugin action list --plugin rmarganti.herdr-pluck
 ```
 
-If you are installing an unreleased ref, make sure either a matching release asset exists for the plugin version or Rust/Cargo is available for the local fallback build.
+If no release asset matches the plugin version, make sure Rust/Cargo is available for the local fallback build. Set `HERDR_PLUCK_BUILD_FROM_SOURCE=1` to skip the release download and build the checked-out source explicitly.
 
 If copying fails, install one of the supported clipboard tools for your platform and try again.

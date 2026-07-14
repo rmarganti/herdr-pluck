@@ -53,17 +53,6 @@ have_command() {
     command -v "$1" >/dev/null 2>&1
 }
 
-is_exact_release_checkout() {
-    version="$1"
-
-    if ! have_command git || [ ! -d .git ]; then
-        return 0
-    fi
-
-    tag=$(git describe --tags --exact-match 2>/dev/null || true)
-    [ "$tag" = "v$version" ]
-}
-
 download_release_binary() {
     version="$1"
     target="$2"
@@ -93,7 +82,7 @@ download_release_binary() {
 }
 
 build_from_source() {
-    log "Falling back to local cargo build"
+    log "Building from local source with cargo"
     cargo build --release
     mkdir -p "$BIN_DIR"
     cp target/release/herdr-pluck "$BIN_PATH"
@@ -104,14 +93,24 @@ main() {
     version=$(plugin_version)
     target=$(current_target)
 
-    if is_exact_release_checkout "$version"; then
-        if download_release_binary "$version" "$target"; then
-            log "Installed $BIN_PATH for $target"
-            exit 0
+    if [ "${HERDR_PLUCK_BUILD_FROM_SOURCE:-0}" = "1" ]; then
+        if ! have_command cargo; then
+            log "HERDR_PLUCK_BUILD_FROM_SOURCE=1 requires cargo"
+            exit 1
         fi
+
+        build_from_source
+        log "Installed $BIN_PATH from local source"
+        exit 0
+    fi
+
+    if download_release_binary "$version" "$target"; then
+        log "Installed $BIN_PATH for $target"
+        exit 0
     fi
 
     if have_command cargo; then
+        log "No prebuilt binary found for version $version on $target"
         build_from_source
         log "Installed $BIN_PATH from local source"
         exit 0
