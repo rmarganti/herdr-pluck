@@ -3,8 +3,8 @@ use serde_json::Value;
 use std::env;
 use std::path::PathBuf;
 
-pub const HERDR_PLUCK_TARGET_PANE_ID: &str = "HERDR_PLUCK_TARGET_PANE_ID";
-pub const HERDR_PLUCK_SNAPSHOT_JSON: &str = "HERDR_PLUCK_SNAPSHOT_JSON";
+/// Env var carrying the snapshot file path into the overlay picker pane.
+pub const HERDR_PLUCK_SNAPSHOT_PATH: &str = "HERDR_PLUCK_SNAPSHOT_PATH";
 
 const HERDR_BIN_PATH: &str = "HERDR_BIN_PATH";
 

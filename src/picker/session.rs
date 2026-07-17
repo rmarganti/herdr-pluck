@@ -1,10 +1,10 @@
 use crate::clipboard::{Clipboard, SystemClipboard};
-use crate::model::{PickerOutcome, PickerSnapshot, RenderLine, RenderSpan, RenderStyle};
+use crate::model::{PickerOutcome, PickerSnapshot, Rect, RenderLine, RenderSpan, RenderStyle};
 use crate::picker::copy::copy_selected_text;
 use crate::picker::input::{
     CrosstermInputSource, InputDecision, InputSource, InputState, PickerInputEvent, RawModeGuard,
 };
-use crate::picker::render::build_picker_view;
+use crate::picker::render::{build_picker_view, place_content_in_overlay};
 use crate::renderer::terminal;
 use anyhow::{anyhow, Result};
 use std::io::{self, Write};
@@ -14,12 +14,18 @@ pub fn run_picker(snapshot: &PickerSnapshot) -> Result<PickerOutcome> {
     let mut stdout = io::stdout();
     let mut input = CrosstermInputSource;
     let clipboard = SystemClipboard;
+    let (overlay_cols, overlay_rows) = crossterm::terminal::size().unwrap_or((
+        snapshot.source.target_content_width,
+        snapshot.source.target_content_height,
+    ));
+    let placement = place_content_in_overlay(&snapshot.source, overlay_cols, overlay_rows);
     let _raw_mode = RawModeGuard::enable()?;
-    run_picker_with(snapshot, &mut input, &clipboard, &mut stdout)
+    run_picker_with(snapshot, placement, &mut input, &clipboard, &mut stdout)
 }
 
 pub(crate) fn run_picker_with<I, C, W>(
     snapshot: &PickerSnapshot,
+    placement: Rect,
     input: &mut I,
     clipboard: &C,
     output: &mut W,
@@ -30,7 +36,7 @@ where
     W: Write,
 {
     let view = build_picker_view(snapshot);
-    terminal::emit_render_lines(output, &view.lines)?;
+    terminal::emit_render_lines_at(output, &view.lines, placement)?;
     output.flush()?;
 
     let Some(width) = view.assignments.width() else {
@@ -90,7 +96,7 @@ fn emit_copy_failure(output: &mut impl Write, text: &str, error: &anyhow::Error)
 mod tests {
     use super::*;
     use crate::clipboard::{ClipboardError, CopySuccess};
-    use crate::model::{PaneId, PaneTextCaptureMode, SourcePaneSnapshot, TempTabSession};
+    use crate::model::{PaneId, PaneTextCaptureMode, SourcePaneSnapshot};
     use std::cell::RefCell;
 
     struct FakeInput {
@@ -138,17 +144,13 @@ mod tests {
                 target_pane_id: PaneId::new("p1"),
                 source_tab_id: "t1".to_string(),
                 workspace_id: "w1".to_string(),
-                source_panes: Vec::new(),
+                tab_area: Rect::new(0, 0, width, height),
+                target_content_rect: Rect::new(0, 0, width, height),
                 target_content_width: width,
                 target_content_height: height,
                 logical_lines: lines.into_iter().map(str::to_string).collect(),
                 visible_viewport: None,
                 capture_mode: PaneTextCaptureMode::RecentUnwrappedBottomApproximation,
-            },
-            session: TempTabSession {
-                temp_tab_id: "t2".to_string(),
-                return_tab_id: "t1".to_string(),
-                return_pane_id: PaneId::new("p1"),
             },
             custom_patterns: Vec::new(),
         }
@@ -162,6 +164,7 @@ mod tests {
 
         let outcome = run_picker_with(
             &snapshot(vec!["open https://example.com/path"], 40, 1),
+            Rect::new(0, 0, 80, 24),
             &mut input,
             &clipboard,
             &mut output,
@@ -192,6 +195,7 @@ mod tests {
                 40,
                 2,
             ),
+            Rect::new(0, 0, 80, 24),
             &mut input,
             &clipboard,
             &mut output,
@@ -218,6 +222,7 @@ mod tests {
 
         let outcome = run_picker_with(
             &snapshot(vec!["open https://example.com/path"], 40, 1),
+            Rect::new(0, 0, 80, 24),
             &mut input,
             &clipboard,
             &mut output,
@@ -237,6 +242,7 @@ mod tests {
 
             let outcome = run_picker_with(
                 &snapshot(vec!["open https://example.com/path"], 40, 1),
+                Rect::new(0, 0, 80, 24),
                 &mut input,
                 &clipboard,
                 &mut output,
@@ -256,6 +262,7 @@ mod tests {
 
         let outcome = run_picker_with(
             &snapshot(vec!["open https://example.com/path"], 40, 1),
+            Rect::new(0, 0, 80, 24),
             &mut input,
             &clipboard,
             &mut output,
@@ -278,6 +285,7 @@ mod tests {
 
         let error = run_picker_with(
             &snapshot(vec!["open https://example.com/path"], 40, 1),
+            Rect::new(0, 0, 80, 24),
             &mut input,
             &clipboard,
             &mut output,
@@ -298,6 +306,7 @@ mod tests {
 
         let outcome = run_picker_with(
             &snapshot(vec!["plain text only"], 30, 3),
+            Rect::new(0, 0, 80, 24),
             &mut input,
             &clipboard,
             &mut output,

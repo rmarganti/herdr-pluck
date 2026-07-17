@@ -101,23 +101,16 @@ pub enum PaneTextCaptureMode {
     VisibleWrapped,
 }
 
-/// One source pane's Herdr-global geometry captured before creating a temporary layout tab.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct SourcePaneGeometry {
-    pub pane_id: PaneId,
-    pub outer_rect: Rect,
-    pub content_rect: Rect,
-    pub content_width: u16,
-    pub content_height: u16,
-}
-
-/// Immutable source tab state needed to launch and render a layout-tab picker.
+/// Immutable source pane state needed to render an overlay picker in place.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SourcePaneSnapshot {
     pub target_pane_id: PaneId,
     pub source_tab_id: String,
     pub workspace_id: String,
-    pub source_panes: Vec<SourcePaneGeometry>,
+    /// Full tab area the overlay pane covers, in Herdr-global coordinates.
+    pub tab_area: Rect,
+    /// Target pane content rect in Herdr-global coordinates (full area when zoomed).
+    pub target_content_rect: Rect,
     pub target_content_width: u16,
     pub target_content_height: u16,
     pub logical_lines: Vec<String>,
@@ -144,14 +137,6 @@ pub struct LogicalLineVisualSegment {
     pub col_end: usize,
 }
 
-/// Temporary layout-tab session ids required for explicit cleanup and focus restoration.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct TempTabSession {
-    pub temp_tab_id: String,
-    pub return_tab_id: String,
-    pub return_pane_id: PaneId,
-}
-
 /// Serializable regex pattern config resolved before the picker pane starts.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PatternSpec {
@@ -164,49 +149,16 @@ pub struct PatternSpec {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PickerSnapshot {
     pub source: SourcePaneSnapshot,
-    pub session: TempTabSession,
     #[serde(default)]
     pub custom_patterns: Vec<PatternSpec>,
 }
 
-/// Direction of a Herdr binary pane split as exposed by layout snapshots and replay commands.
+/// Direction of a Herdr binary pane split as exposed by layout snapshots.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum SplitDirection {
     Right,
     Down,
-}
-
-impl SplitDirection {
-    pub fn as_cli_arg(self) -> &'static str {
-        match self {
-            Self::Right => "right",
-            Self::Down => "down",
-        }
-    }
-}
-
-/// Binary Herdr layout tree with source pane ids preserved at leaves.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub enum LayoutNode {
-    Pane {
-        source_pane_id: PaneId,
-        rect: Rect,
-    },
-    Split {
-        direction: SplitDirection,
-        ratio: f32,
-        first: Box<LayoutNode>,
-        second: Box<LayoutNode>,
-        rect: Rect,
-    },
-}
-
-/// Replayable layout plan plus the source pane that must receive the picker.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct LayoutRecreationPlan {
-    pub root: LayoutNode,
-    pub target_source_pane_id: PaneId,
 }
 
 /// Unwrapped logical pane text lines and dimensions at the time of picker activation.

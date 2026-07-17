@@ -84,7 +84,7 @@ herdr server reload-config
 
 1. Focus a Herdr pane containing a URL, path, commit SHA, UUID, IP address, long numeric identifier, hex literal, Kubernetes reference, Git status path, branch, or diff path.
 2. Invoke `rmarganti.herdr-pluck.pluck` through your keybinding or Herdr's plugin action command.
-3. Herdr Pluck opens a temporary picker tab that mirrors the source layout and shows hints over copyable text in the target pane.
+3. Herdr Pluck opens an overlay pane in place that shows hints over copyable text in the target pane.
 4. Type the shown one- or two-letter hint to copy that token and close the picker.
 5. Press Escape or Ctrl-C to cancel without copying.
 

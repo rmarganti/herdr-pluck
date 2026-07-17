@@ -1,6 +1,8 @@
 use crate::config::compile_pattern_specs;
 use crate::hints::{assign_hints, HintAssignments};
-use crate::model::{PickerOutcome, PickerSnapshot, RenderLine, RenderSpan, RenderStyle};
+use crate::model::{
+    PickerOutcome, PickerSnapshot, Rect, RenderLine, RenderSpan, RenderStyle, SourcePaneSnapshot,
+};
 use crate::patterns::find_matches;
 use crate::renderer::{render_inline_hints, render_visible_inline_hints, terminal};
 use anyhow::{Context, Result};
@@ -26,6 +28,33 @@ pub struct ReadonlyPickerView {
     pub lines: Vec<RenderLine>,
     pub match_count: usize,
     pub hint_count: usize,
+}
+
+/// Maps the source pane's content rect into overlay-local coordinates.
+///
+/// Assumes the overlay pane covers the source tab area minus symmetric chrome
+/// (borders/title), then clamps so the content never spills past the overlay.
+pub fn place_content_in_overlay(
+    source: &SourcePaneSnapshot,
+    overlay_cols: u16,
+    overlay_rows: u16,
+) -> Rect {
+    let inset_x = source.tab_area.width.saturating_sub(overlay_cols) / 2;
+    let inset_y = source.tab_area.height.saturating_sub(overlay_rows) / 2;
+    let content = source.target_content_rect.relative_to(source.tab_area);
+
+    let width = source.target_content_width.min(overlay_cols);
+    let height = source.target_content_height.min(overlay_rows);
+    let x = content
+        .x
+        .saturating_sub(inset_x)
+        .min(overlay_cols.saturating_sub(width));
+    let y = content
+        .y
+        .saturating_sub(inset_y)
+        .min(overlay_rows.saturating_sub(height));
+
+    Rect::new(x, y, width, height)
 }
 
 /// Builds the production picker view from captured pane text.
@@ -154,7 +183,7 @@ fn fit_to_width(text: &str, width: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::model::{PaneId, PaneTextCaptureMode, SourcePaneSnapshot, TempTabSession};
+    use crate::model::{PaneId, PaneTextCaptureMode, SourcePaneSnapshot};
 
     fn snapshot(lines: Vec<&str>, width: u16, height: u16) -> PickerSnapshot {
         PickerSnapshot {
@@ -162,20 +191,60 @@ mod tests {
                 target_pane_id: PaneId::new("p1"),
                 source_tab_id: "t1".to_string(),
                 workspace_id: "w1".to_string(),
-                source_panes: Vec::new(),
+                tab_area: Rect::new(0, 0, width, height),
+                target_content_rect: Rect::new(0, 0, width, height),
                 target_content_width: width,
                 target_content_height: height,
                 logical_lines: lines.into_iter().map(str::to_string).collect(),
                 visible_viewport: None,
                 capture_mode: PaneTextCaptureMode::RecentUnwrappedBottomApproximation,
             },
-            session: TempTabSession {
-                temp_tab_id: "t2".to_string(),
-                return_tab_id: "t1".to_string(),
-                return_pane_id: PaneId::new("p1"),
-            },
             custom_patterns: Vec::new(),
         }
+    }
+
+    fn geometry_snapshot(tab_area: Rect, content: Rect) -> SourcePaneSnapshot {
+        SourcePaneSnapshot {
+            target_pane_id: PaneId::new("p1"),
+            source_tab_id: "t1".to_string(),
+            workspace_id: "w1".to_string(),
+            tab_area,
+            target_content_rect: content,
+            target_content_width: content.width,
+            target_content_height: content.height,
+            logical_lines: Vec::new(),
+            visible_viewport: None,
+            capture_mode: PaneTextCaptureMode::ExactVisibleUnwrapped,
+        }
+    }
+
+    #[test]
+    fn placement_offsets_content_by_overlay_chrome_inset() {
+        // Tab area 100x40 at (26,1); overlay tty is 98x38 → symmetric inset of 1.
+        let source = geometry_snapshot(Rect::new(26, 1, 100, 40), Rect::new(31, 3, 60, 20));
+
+        let placement = place_content_in_overlay(&source, 98, 38);
+
+        assert_eq!(placement, Rect::new(4, 1, 60, 20));
+    }
+
+    #[test]
+    fn placement_clamps_content_to_overlay_bounds() {
+        // Content as wide as the tab area but overlay is smaller: clip and pin to origin.
+        let source = geometry_snapshot(Rect::new(0, 0, 100, 40), Rect::new(0, 0, 100, 40));
+
+        let placement = place_content_in_overlay(&source, 98, 38);
+
+        assert_eq!(placement, Rect::new(0, 0, 98, 38));
+    }
+
+    #[test]
+    fn placement_shifts_bottom_right_content_inside_overlay() {
+        let source = geometry_snapshot(Rect::new(0, 0, 100, 40), Rect::new(60, 30, 40, 10));
+
+        let placement = place_content_in_overlay(&source, 98, 38);
+
+        assert_eq!(placement, Rect::new(58, 28, 40, 10));
     }
 
     #[test]

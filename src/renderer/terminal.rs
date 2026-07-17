@@ -1,4 +1,4 @@
-use crate::model::{RenderLine, RenderStyle};
+use crate::model::{Rect, RenderLine, RenderSpan, RenderStyle};
 use anyhow::Result;
 use crossterm::{
     cursor::MoveTo,
@@ -9,6 +9,7 @@ use crossterm::{
     terminal::{Clear, ClearType},
 };
 use std::io::Write;
+use unicode_width::UnicodeWidthStr;
 
 /// Emits abstract picker render lines to a terminal writer using v1 styling.
 pub fn emit_render_lines(writer: &mut impl Write, lines: &[RenderLine]) -> Result<()> {
@@ -26,6 +27,59 @@ pub fn emit_render_lines(writer: &mut impl Write, lines: &[RenderLine]) -> Resul
 
     queue!(writer, ResetColor, SetAttribute(Attribute::Reset))?;
     Ok(())
+}
+
+/// Emits render lines positioned at `placement` inside the overlay pane,
+/// clipping to the placement size so nothing wraps past the overlay edge.
+pub fn emit_render_lines_at(
+    writer: &mut impl Write,
+    lines: &[RenderLine],
+    placement: Rect,
+) -> Result<()> {
+    queue!(writer, Clear(ClearType::All))?;
+
+    for (row, line) in lines.iter().take(placement.height as usize).enumerate() {
+        queue!(writer, MoveTo(placement.x, placement.y + row as u16))?;
+        for span in clip_spans(&line.spans, placement.width as usize) {
+            queue_style(writer, span.style)?;
+            queue!(writer, Print(&span.text))?;
+        }
+    }
+
+    queue!(writer, ResetColor, SetAttribute(Attribute::Reset))?;
+    Ok(())
+}
+
+/// Clips styled spans to a maximum display width, splitting mid-span if needed.
+fn clip_spans(spans: &[RenderSpan], max_width: usize) -> Vec<RenderSpan> {
+    let mut clipped = Vec::new();
+    let mut used = 0;
+    for span in spans {
+        let span_width = span.text.width();
+        if used + span_width <= max_width {
+            clipped.push(span.clone());
+            used += span_width;
+            continue;
+        }
+
+        let mut text = String::new();
+        for ch in span.text.chars() {
+            let char_width = unicode_width::UnicodeWidthChar::width(ch).unwrap_or(0);
+            if used + char_width > max_width {
+                break;
+            }
+            text.push(ch);
+            used += char_width;
+        }
+        if !text.is_empty() {
+            clipped.push(RenderSpan {
+                text,
+                style: span.style,
+            });
+        }
+        break;
+    }
+    clipped
 }
 
 fn queue_style(writer: &mut impl Write, style: RenderStyle) -> Result<()> {
@@ -86,6 +140,66 @@ mod tests {
         assert!(output.contains("\u{1b}[38;5;0m"));
         assert!(output.contains("\u{1b}[48;5;14m"));
         assert!(output.contains("\u{1b}[38;5;11m"));
+    }
+
+    #[test]
+    fn positioned_emission_moves_to_placement_origin_per_row() {
+        let lines = vec![
+            RenderLine {
+                spans: vec![RenderSpan {
+                    text: "one".to_string(),
+                    style: RenderStyle::Unmatched,
+                }],
+            },
+            RenderLine {
+                spans: vec![RenderSpan {
+                    text: "two".to_string(),
+                    style: RenderStyle::Match,
+                }],
+            },
+        ];
+        let mut output = Vec::new();
+
+        emit_render_lines_at(&mut output, &lines, Rect::new(4, 2, 10, 5)).unwrap();
+        let output = String::from_utf8(output).unwrap();
+
+        assert!(output.contains("\u{1b}[3;5H"));
+        assert!(output.contains("\u{1b}[4;5H"));
+        assert!(output.contains("one"));
+        assert!(output.contains("two"));
+    }
+
+    #[test]
+    fn positioned_emission_clips_rows_and_columns_to_placement() {
+        let lines = vec![
+            RenderLine {
+                spans: vec![
+                    RenderSpan {
+                        text: "abc".to_string(),
+                        style: RenderStyle::Unmatched,
+                    },
+                    RenderSpan {
+                        text: "defgh".to_string(),
+                        style: RenderStyle::Match,
+                    },
+                ],
+            },
+            RenderLine {
+                spans: vec![RenderSpan {
+                    text: "hidden".to_string(),
+                    style: RenderStyle::Unmatched,
+                }],
+            },
+        ];
+        let mut output = Vec::new();
+
+        emit_render_lines_at(&mut output, &lines, Rect::new(0, 0, 5, 1)).unwrap();
+        let output = String::from_utf8(output).unwrap();
+
+        assert!(output.contains("abc"));
+        assert!(output.contains("de"));
+        assert!(!output.contains("def"));
+        assert!(!output.contains("hidden"));
     }
 
     #[test]

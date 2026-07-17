@@ -1,6 +1,5 @@
-use crate::model::{PaneId, SplitDirection};
+use crate::model::PaneId;
 use anyhow::{anyhow, Context, Result};
-use serde::Deserialize;
 use std::path::PathBuf;
 use std::process::Command;
 
@@ -76,63 +75,31 @@ impl<'a, R: CommandRunner> HerdrCommands<'a, R> {
         Ok(String::from_utf8_lossy(&stdout).into_owned())
     }
 
-    pub fn tab_create(
+    /// Opens a manifest-declared plugin overlay pane over the currently active pane.
+    pub fn plugin_pane_open_overlay(
         &mut self,
-        workspace_id: &str,
-        label: &str,
+        plugin_id: &str,
+        entrypoint: &str,
+        env: &[(&str, String)],
         focus: bool,
-    ) -> Result<TabCreateResponse> {
+    ) -> Result<()> {
         let mut args = vec![
-            "tab".to_string(),
-            "create".to_string(),
-            "--workspace".to_string(),
-            workspace_id.to_string(),
-            "--label".to_string(),
-            label.to_string(),
-        ];
-        args.push(if focus { "--focus" } else { "--no-focus" }.to_string());
-        let stdout = self.run_checked_owned(args)?;
-        parse_json(&stdout, "tab create")
-    }
-
-    pub fn pane_split(
-        &mut self,
-        pane: &PaneId,
-        direction: SplitDirection,
-        ratio: f32,
-        focus: bool,
-    ) -> Result<PaneSplitResponse> {
-        let mut args = vec![
+            "plugin".to_string(),
             "pane".to_string(),
-            "split".to_string(),
-            pane.0.clone(),
-            "--direction".to_string(),
-            direction.as_cli_arg().to_string(),
-            "--ratio".to_string(),
-            ratio.to_string(),
+            "open".to_string(),
+            "--plugin".to_string(),
+            plugin_id.to_string(),
+            "--entrypoint".to_string(),
+            entrypoint.to_string(),
+            "--placement".to_string(),
+            "overlay".to_string(),
         ];
+        for (key, value) in env {
+            args.push("--env".to_string());
+            args.push(format!("{key}={value}"));
+        }
         args.push(if focus { "--focus" } else { "--no-focus" }.to_string());
-        let stdout = self.run_checked_owned(args)?;
-        parse_json(&stdout, "pane split")
-    }
-
-    pub fn pane_run(&mut self, pane: &PaneId, command: &str) -> Result<()> {
-        self.run_checked(vec!["pane", "run", &pane.0, command])?;
-        Ok(())
-    }
-
-    pub fn pane_zoom_on(&mut self, pane: &PaneId) -> Result<()> {
-        self.run_checked(vec!["pane", "zoom", &pane.0, "--on"])?;
-        Ok(())
-    }
-
-    pub fn tab_focus(&mut self, tab_id: &str) -> Result<()> {
-        self.run_checked(vec!["tab", "focus", tab_id])?;
-        Ok(())
-    }
-
-    pub fn tab_close(&mut self, tab_id: &str) -> Result<()> {
-        self.run_checked(vec!["tab", "close", tab_id])?;
+        self.run_checked_owned(args)?;
         Ok(())
     }
 
@@ -159,45 +126,6 @@ impl<'a, R: CommandRunner> HerdrCommands<'a, R> {
             ))
         }
     }
-}
-
-#[derive(Debug, Clone, Deserialize)]
-struct Envelope<T> {
-    result: T,
-}
-
-/// Parsed `tab create` response fields used by layout-tab launching.
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
-pub struct TabCreateResponse {
-    pub tab: TabInfo,
-    pub root_pane: PaneInfo,
-}
-
-/// Parsed `pane split` response fields used by split replay.
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
-pub struct PaneSplitResponse {
-    pub pane: PaneInfo,
-}
-
-/// Minimal tab metadata returned by Herdr CLI commands.
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
-pub struct TabInfo {
-    pub tab_id: String,
-    pub workspace_id: String,
-}
-
-/// Minimal pane metadata returned by Herdr CLI commands.
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
-pub struct PaneInfo {
-    pub pane_id: String,
-    pub tab_id: String,
-    pub workspace_id: String,
-}
-
-fn parse_json<T: for<'de> Deserialize<'de>>(bytes: &[u8], context: &str) -> Result<T> {
-    let envelope: Envelope<T> = serde_json::from_slice(bytes)
-        .with_context(|| format!("failed to parse Herdr {context} JSON"))?;
-    Ok(envelope.result)
 }
 
 #[cfg(test)]
@@ -239,15 +167,37 @@ pub mod tests {
     }
 
     #[test]
-    fn parses_tab_create_response() {
+    fn plugin_pane_open_overlay_passes_env_and_focus() {
         let mut runner = FakeRunner::default();
-        runner.push_stdout(r#"{"result":{"tab":{"tab_id":"w:t2","workspace_id":"w"},"root_pane":{"pane_id":"w:p2","tab_id":"w:t2","workspace_id":"w"}}}"#);
+        runner.push_stdout(r#"{"result":{"type":"plugin_pane_opened"}}"#);
         let mut commands = HerdrCommands::new("herdr", &mut runner);
 
-        let response = commands.tab_create("w", "label", false).unwrap();
+        commands
+            .plugin_pane_open_overlay(
+                "rmarganti.herdr-pluck",
+                "picker",
+                &[("HERDR_PLUCK_SNAPSHOT_PATH", "/tmp/s.json".to_string())],
+                true,
+            )
+            .unwrap();
 
-        assert_eq!(response.tab.tab_id, "w:t2");
-        assert_eq!(response.root_pane.pane_id, "w:p2");
+        assert_eq!(
+            runner.calls[0],
+            vec![
+                "plugin",
+                "pane",
+                "open",
+                "--plugin",
+                "rmarganti.herdr-pluck",
+                "--entrypoint",
+                "picker",
+                "--placement",
+                "overlay",
+                "--env",
+                "HERDR_PLUCK_SNAPSHOT_PATH=/tmp/s.json",
+                "--focus",
+            ]
+        );
     }
 
     #[test]

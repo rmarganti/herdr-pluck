@@ -4,20 +4,19 @@ pub mod executor;
 pub mod layout;
 pub mod snapshot;
 
-use crate::config::resolve_pattern_specs;
+use crate::config::{resolve_pattern_specs, PLUGIN_ID};
 use crate::herdr::commands::ProcessCommandRunner;
 use crate::herdr::context::HerdrContext;
-use crate::herdr::executor::{cleanup_session, launch_layout_tab_picker, run_snapshot_picker};
+use crate::herdr::executor::{launch_overlay_picker, run_snapshot_picker};
 use crate::herdr::snapshot::{read_snapshot_file, remove_snapshot_file};
 use crate::model::PaneId;
-use anyhow::{Context, Result};
+use anyhow::Result;
 use std::path::Path;
 
-pub use context::{HERDR_PLUCK_SNAPSHOT_JSON, HERDR_PLUCK_TARGET_PANE_ID};
-pub use layout::{derive_layout_recreation_plan, parse_layout_snapshot};
-pub use snapshot::{SnapshotTransport, SnapshotTransportConstraints};
+pub use context::HERDR_PLUCK_SNAPSHOT_PATH;
+pub use layout::parse_layout_snapshot;
 
-/// Narrow production adapter for Herdr layout-tab launch and picker cleanup.
+/// Narrow production adapter for Herdr overlay-pane launch and picker mode.
 #[derive(Debug, Clone)]
 pub struct HerdrAdapter {
     context: HerdrContext,
@@ -38,33 +37,29 @@ impl HerdrAdapter {
         self.context.target_pane()
     }
 
-    /// Launches the production layout-tab picker for the requested source pane.
-    pub fn open_layout_tab_picker(&self, target: &PaneId) -> Result<()> {
-        let binary_path = std::env::current_exe().context("failed to locate herdr-pluck binary")?;
+    /// Launches the production overlay picker for the requested source pane.
+    pub fn open_overlay_picker(&self, target: &PaneId) -> Result<()> {
         let mut runner = ProcessCommandRunner;
         let focused_pane_cwd = self.context.focused_pane_cwd();
         let custom_patterns = resolve_pattern_specs(focused_pane_cwd.as_deref());
-        launch_layout_tab_picker(
+        let plugin_id = self.context.plugin_id.as_deref().unwrap_or(PLUGIN_ID);
+        launch_overlay_picker(
             &self.context.herdr_bin,
             &mut runner,
             target,
-            &binary_path,
+            plugin_id,
             custom_patterns,
         )?;
         Ok(())
     }
 
-    /// Runs picker placeholder from a snapshot file and then performs session cleanup.
+    /// Runs picker mode from a snapshot file; the overlay closes when this process exits.
     pub fn run_picker_from_snapshot(&self, snapshot_path: &Path) -> Result<()> {
         let snapshot = read_snapshot_file(snapshot_path)?;
         let picker_result = run_snapshot_picker(&snapshot);
-        let mut runner = ProcessCommandRunner;
-        let cleanup_result =
-            cleanup_session(&self.context.herdr_bin, &mut runner, &snapshot.session);
         let remove_result = remove_snapshot_file(snapshot_path);
 
         picker_result?;
-        cleanup_result?;
         remove_result?;
         Ok(())
     }

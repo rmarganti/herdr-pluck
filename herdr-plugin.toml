@@ -13,3 +13,9 @@ id = "pluck"
 title = "Pluck visible token"
 contexts = ["pane", "workspace"]
 command = ["./bin/herdr-pluck", "open"]
+
+[[panes]]
+id = "picker"
+title = "Herdr Pluck"
+placement = "overlay"
+command = ["./bin/herdr-pluck", "pick"]
