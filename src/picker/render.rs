@@ -154,7 +154,7 @@ fn fit_to_width(text: &str, width: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::model::{PaneId, PaneTextCaptureMode, SourcePaneSnapshot, TempTabSession};
+    use crate::model::{PaneId, PaneTextCaptureMode, PickerReturnContext, SourcePaneSnapshot};
 
     fn snapshot(lines: Vec<&str>, width: u16, height: u16) -> PickerSnapshot {
         PickerSnapshot {
@@ -169,10 +169,10 @@ mod tests {
                 visible_viewport: None,
                 capture_mode: PaneTextCaptureMode::RecentUnwrappedBottomApproximation,
             },
-            session: TempTabSession {
-                temp_tab_id: "t2".to_string(),
+            session: PickerReturnContext {
                 return_tab_id: "t1".to_string(),
                 return_pane_id: PaneId::new("p1"),
+                zoom_picker: false,
             },
             custom_patterns: Vec::new(),
         }

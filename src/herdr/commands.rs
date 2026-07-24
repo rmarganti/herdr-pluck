@@ -1,6 +1,5 @@
-use crate::model::{PaneId, SplitDirection};
+use crate::model::PaneId;
 use anyhow::{anyhow, Context, Result};
-use serde::Deserialize;
 use std::path::PathBuf;
 use std::process::Command;
 
@@ -50,19 +49,6 @@ impl<'a, R: CommandRunner> HerdrCommands<'a, R> {
         self.run_checked(vec!["pane", "layout", "--pane", &pane.0])
     }
 
-    pub fn pane_read_recent_unwrapped(&mut self, pane: &PaneId, lines: u16) -> Result<String> {
-        let stdout = self.run_checked(vec![
-            "pane",
-            "read",
-            &pane.0,
-            "--source",
-            "recent-unwrapped",
-            "--lines",
-            &lines.to_string(),
-        ])?;
-        Ok(String::from_utf8_lossy(&stdout).into_owned())
-    }
-
     pub fn pane_read_visible(&mut self, pane: &PaneId, lines: u16) -> Result<String> {
         let stdout = self.run_checked(vec![
             "pane",
@@ -74,51 +60,6 @@ impl<'a, R: CommandRunner> HerdrCommands<'a, R> {
             &lines.to_string(),
         ])?;
         Ok(String::from_utf8_lossy(&stdout).into_owned())
-    }
-
-    pub fn tab_create(
-        &mut self,
-        workspace_id: &str,
-        label: &str,
-        focus: bool,
-    ) -> Result<TabCreateResponse> {
-        let mut args = vec![
-            "tab".to_string(),
-            "create".to_string(),
-            "--workspace".to_string(),
-            workspace_id.to_string(),
-            "--label".to_string(),
-            label.to_string(),
-        ];
-        args.push(if focus { "--focus" } else { "--no-focus" }.to_string());
-        let stdout = self.run_checked_owned(args)?;
-        parse_json(&stdout, "tab create")
-    }
-
-    pub fn pane_split(
-        &mut self,
-        pane: &PaneId,
-        direction: SplitDirection,
-        ratio: f32,
-        focus: bool,
-    ) -> Result<PaneSplitResponse> {
-        let mut args = vec![
-            "pane".to_string(),
-            "split".to_string(),
-            pane.0.clone(),
-            "--direction".to_string(),
-            direction.as_cli_arg().to_string(),
-            "--ratio".to_string(),
-            ratio.to_string(),
-        ];
-        args.push(if focus { "--focus" } else { "--no-focus" }.to_string());
-        let stdout = self.run_checked_owned(args)?;
-        parse_json(&stdout, "pane split")
-    }
-
-    pub fn pane_run(&mut self, pane: &PaneId, command: &str) -> Result<()> {
-        self.run_checked(vec!["pane", "run", &pane.0, command])?;
-        Ok(())
     }
 
     pub fn pane_zoom_on(&mut self, pane: &PaneId) -> Result<()> {
@@ -161,45 +102,6 @@ impl<'a, R: CommandRunner> HerdrCommands<'a, R> {
     }
 }
 
-#[derive(Debug, Clone, Deserialize)]
-struct Envelope<T> {
-    result: T,
-}
-
-/// Parsed `tab create` response fields used by layout-tab launching.
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
-pub struct TabCreateResponse {
-    pub tab: TabInfo,
-    pub root_pane: PaneInfo,
-}
-
-/// Parsed `pane split` response fields used by split replay.
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
-pub struct PaneSplitResponse {
-    pub pane: PaneInfo,
-}
-
-/// Minimal tab metadata returned by Herdr CLI commands.
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
-pub struct TabInfo {
-    pub tab_id: String,
-    pub workspace_id: String,
-}
-
-/// Minimal pane metadata returned by Herdr CLI commands.
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
-pub struct PaneInfo {
-    pub pane_id: String,
-    pub tab_id: String,
-    pub workspace_id: String,
-}
-
-fn parse_json<T: for<'de> Deserialize<'de>>(bytes: &[u8], context: &str) -> Result<T> {
-    let envelope: Envelope<T> = serde_json::from_slice(bytes)
-        .with_context(|| format!("failed to parse Herdr {context} JSON"))?;
-    Ok(envelope.result)
-}
-
 #[cfg(test)]
 pub mod tests {
     use super::*;
@@ -219,14 +121,6 @@ pub mod tests {
                 success: true,
             });
         }
-
-        pub fn push_failure(&mut self, stderr: impl Into<Vec<u8>>) {
-            self.outputs.push_back(CommandOutput {
-                stdout: Vec::new(),
-                stderr: stderr.into(),
-                success: false,
-            });
-        }
     }
 
     impl CommandRunner for FakeRunner {
@@ -236,18 +130,6 @@ pub mod tests {
                 .pop_front()
                 .ok_or_else(|| anyhow!("fake runner had no output for {}", args.join(" ")))
         }
-    }
-
-    #[test]
-    fn parses_tab_create_response() {
-        let mut runner = FakeRunner::default();
-        runner.push_stdout(r#"{"result":{"tab":{"tab_id":"w:t2","workspace_id":"w"},"root_pane":{"pane_id":"w:p2","tab_id":"w:t2","workspace_id":"w"}}}"#);
-        let mut commands = HerdrCommands::new("herdr", &mut runner);
-
-        let response = commands.tab_create("w", "label", false).unwrap();
-
-        assert_eq!(response.tab.tab_id, "w:t2");
-        assert_eq!(response.root_pane.pane_id, "w:p2");
     }
 
     #[test]

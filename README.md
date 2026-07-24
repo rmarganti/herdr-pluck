@@ -167,3 +167,7 @@ herdr plugin action list --plugin rmarganti.herdr-pluck
 If no release asset matches the plugin version, make sure Rust/Cargo is available for the local fallback build. Set `HERDR_PLUCK_BUILD_FROM_SOURCE=1` to skip the release download and build the checked-out source explicitly.
 
 If copying fails, install one of the supported clipboard tools for your platform and try again.
+
+## Shell-free picker launch
+
+Herdr Pluck requires Herdr 0.7.4 or newer and uses argv-backed `layout.apply`; temporary picker panes do not start a user shell or load shell startup files.
