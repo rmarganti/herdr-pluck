@@ -1,4 +1,3 @@
-use crate::herdr::commands::{HerdrCommands, ProcessCommandRunner};
 use crate::model::PatternSpec;
 use crate::patterns::CustomPatternDefinition;
 use anyhow::{Context, Result};
@@ -117,20 +116,7 @@ fn global_config_dir() -> Result<Option<PathBuf>> {
     if let Some(path) = std::env::var_os("HERDR_PLUGIN_CONFIG_DIR") {
         return Ok(Some(PathBuf::from(path)));
     }
-    if cfg!(test) {
-        return Ok(None);
-    }
-
-    let herdr_bin = std::env::var("HERDR_BIN_PATH").unwrap_or_else(|_| "herdr".to_string());
-    let mut runner = ProcessCommandRunner;
-    let mut commands = HerdrCommands::new(&herdr_bin, &mut runner);
-    let path = commands.plugin_config_dir(PLUGIN_ID)?;
-
-    if path.as_os_str().is_empty() {
-        Ok(None)
-    } else {
-        Ok(Some(path))
-    }
+    Ok(None)
 }
 
 fn load_project_pattern_specs(cwd: &Path, pattern_files: &[String]) -> Vec<PatternSpec> {

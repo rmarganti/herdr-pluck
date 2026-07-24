@@ -1,148 +1,128 @@
-use crate::herdr::commands::{CommandRunner, HerdrCommands};
-use crate::herdr::layout::{
-    derive_layout_recreation_plan, derive_source_geometry, parse_layout_snapshot,
-};
-use crate::herdr::snapshot::{
-    build_source_snapshot, choose_picker_snapshot_transport, inert_pane_command, picker_command,
-    remove_snapshot_file, write_snapshot_file, SnapshotFile, SnapshotTransport,
-};
-use crate::model::{LayoutNode, PaneId, PatternSpec, PickerSnapshot, TempTabSession};
+use crate::herdr::client::{HerdrClient, LaunchLayoutNode};
+use crate::herdr::layout::{derive_layout_recreation_plan, derive_source_geometry};
+use crate::herdr::snapshot::{build_source_snapshot, PickerLaunchFiles};
+use crate::model::{LayoutNode, PaneId, PatternSpec, PickerReturnContext, PickerSnapshot};
 use crate::viewport::map_visible_viewport;
-use anyhow::{anyhow, Context, Result};
-use std::collections::HashMap;
+use anyhow::{bail, Context, Result};
 use std::path::Path;
 
-/// Result of launching a temporary layout-tab picker.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct LayoutTabLaunch {
-    pub session: TempTabSession,
-    pub target_temp_pane_id: PaneId,
-    pub snapshot_file: SnapshotFile,
-    pub pane_mapping: HashMap<PaneId, PaneId>,
-}
-
-/// Captures the source pane, recreates its tab layout, and launches picker mode in the target pane.
-pub fn launch_layout_tab_picker<R: CommandRunner>(
-    herdr_bin: &str,
-    runner: &mut R,
+/// Captures source state and atomically applies the temporary picker layout.
+pub fn launch_layout_tab_picker<C: HerdrClient>(
+    client: &mut C,
     target: &PaneId,
     binary_path: &Path,
     custom_patterns: Vec<PatternSpec>,
-) -> Result<LayoutTabLaunch> {
-    let layout_bytes = {
-        let mut commands = HerdrCommands::new(herdr_bin, runner);
-        commands.pane_layout(target)?
-    };
-    let layout = parse_layout_snapshot(&layout_bytes)?;
+) -> Result<()> {
+    let layout = client.pane_layout(target)?;
     let plan = derive_layout_recreation_plan(&layout, target)?;
+    let geometry = derive_source_geometry(&layout, target);
+    let read_lines = geometry.source_content_rect.height;
 
-    let read_lines = derive_source_geometry(&layout, target)
-        .source_content_rect
-        .height;
     if read_lines == 0 {
-        anyhow::bail!("target pane {target} has zero visible content height");
+        bail!("target pane {target} has zero visible content height");
     }
-    let visible_text = {
-        let mut commands = HerdrCommands::new(herdr_bin, runner);
-        commands.pane_read_visible(target, read_lines)?
-    };
-    let visible_rows = visible_text.lines().map(str::to_string).collect::<Vec<_>>();
-    let visible_viewport = map_visible_viewport(
-        visible_rows,
-        derive_source_geometry(&layout, target)
-            .source_content_rect
-            .width,
+
+    let visible_text = client.pane_read_visible(target, read_lines)?;
+
+    let viewport = map_visible_viewport(
+        visible_text.lines().map(str::to_string).collect(),
+        geometry.source_content_rect.width,
         read_lines,
     );
-    let logical_lines = visible_viewport.logical_lines.clone();
+
+    let return_context = PickerReturnContext {
+        return_tab_id: layout
+            .tab_id
+            .clone()
+            .context("pane layout did not include return tab id")?,
+        return_pane_id: target.clone(),
+        zoom_picker: layout.zoomed && layout_target_is_focused(&layout, target),
+    };
+
+    let snapshot = build_source_snapshot(
+        &layout,
+        target,
+        viewport.logical_lines.clone(),
+        Some(viewport),
+        return_context.clone(),
+        custom_patterns,
+    )?;
+
+    let files = PickerLaunchFiles::create(&snapshot)?;
+
+    let root = convert_layout(
+        &plan.root,
+        target,
+        binary_path,
+        &files.snapshot_path,
+        &files.ready_path,
+    );
 
     let workspace_id = layout
         .workspace_id
         .as_deref()
         .context("pane layout did not include workspace id")?;
-    let return_tab_id = layout
-        .tab_id
-        .clone()
-        .context("pane layout did not include return tab id")?;
-
-    let tab = {
-        let mut commands = HerdrCommands::new(herdr_bin, runner);
-        commands.tab_create(workspace_id, "Herdr Pluck", true)?
-    };
-    let session = TempTabSession {
-        temp_tab_id: tab.tab.tab_id.clone(),
-        return_tab_id,
-        return_pane_id: target.clone(),
-    };
-
-    let replay_result = replay_layout_tree(
-        herdr_bin,
-        runner,
-        &plan.root,
-        PaneId::new(tab.root_pane.pane_id.clone()),
-        target,
-    )
-    .inspect_err(|_| {
-        let _ = cleanup_session(herdr_bin, runner, &session);
-    })?;
-
-    let target_temp_pane_id = replay_result
-        .pane_mapping
-        .get(target)
-        .cloned()
-        .ok_or_else(|| anyhow!("layout replay did not create a temp pane for target {target}"))?;
-
-    let snapshot = build_source_snapshot(
-        &layout,
-        target,
-        logical_lines,
-        Some(visible_viewport),
-        session.clone(),
-        custom_patterns,
-    )?;
-    let snapshot_file = match choose_picker_snapshot_transport(&snapshot)? {
-        SnapshotTransport::TempFile => write_snapshot_file(&snapshot)?,
-        SnapshotTransport::EnvJson => {
-            anyhow::bail!("env-json picker snapshot transport is not supported for pane run")
-        }
-    };
-
-    if layout.zoomed && layout_target_is_focused(&layout, target) {
-        let mut commands = HerdrCommands::new(herdr_bin, runner);
-        if let Err(error) = commands.pane_zoom_on(&target_temp_pane_id) {
-            cleanup_failed_launch(herdr_bin, runner, &session, &snapshot_file);
+    let applied = match client.apply_layout(workspace_id, "Herdr Pluck", &root) {
+        Ok(value) => value,
+        Err(error) => {
+            let _ = files.cleanup();
             return Err(error);
         }
-    }
+    };
 
-    if let Err(error) = launch_pane_commands(
-        herdr_bin,
-        runner,
-        binary_path,
-        &target_temp_pane_id,
-        &snapshot_file,
-        &replay_result.pane_mapping,
-    ) {
-        cleanup_failed_launch(herdr_bin, runner, &session, &snapshot_file);
+    let focus_result = client.focus_pane(&applied.picker_pane_id);
+
+    if let Err(error) = focus_result.and_then(|_| files.signal_ready()) {
+        if let Err(cleanup) = cleanup_session(client, &return_context, &applied.tab_id) {
+            eprintln!("launch cleanup also failed: {cleanup:#}");
+        }
+
+        if let Err(cleanup) = files.cleanup() {
+            eprintln!("launch file cleanup also failed: {cleanup:#}");
+        }
+
         return Err(error);
     }
 
-    Ok(LayoutTabLaunch {
-        session,
-        target_temp_pane_id,
-        snapshot_file,
-        pane_mapping: replay_result.pane_mapping,
-    })
+    Ok(())
 }
 
-fn cleanup_failed_launch<R: CommandRunner>(
-    herdr_bin: &str,
-    runner: &mut R,
-    session: &TempTabSession,
-    snapshot_file: &SnapshotFile,
-) {
-    let _ = cleanup_session(herdr_bin, runner, session);
-    let _ = remove_snapshot_file(&snapshot_file.path);
+fn convert_layout(
+    node: &LayoutNode,
+    target: &PaneId,
+    binary: &Path,
+    snapshot: &Path,
+    ready: &Path,
+) -> LaunchLayoutNode {
+    match node {
+        LayoutNode::Pane { source_pane_id, .. } if source_pane_id == target => {
+            LaunchLayoutNode::Pane {
+                command: vec![
+                    binary.to_string_lossy().into_owned(),
+                    "pick".into(),
+                    "--snapshot".into(),
+                    snapshot.to_string_lossy().into_owned(),
+                    "--ready".into(),
+                    ready.to_string_lossy().into_owned(),
+                ],
+            }
+        }
+        LayoutNode::Pane { .. } => LaunchLayoutNode::Pane {
+            command: vec![binary.to_string_lossy().into_owned(), "idle".into()],
+        },
+        LayoutNode::Split {
+            direction,
+            ratio,
+            first,
+            second,
+            ..
+        } => LaunchLayoutNode::Split {
+            direction: *direction,
+            ratio: *ratio,
+            first: Box::new(convert_layout(first, target, binary, snapshot, ready)),
+            second: Box::new(convert_layout(second, target, binary, snapshot, ready)),
+        },
+    }
 }
 
 fn layout_target_is_focused(
@@ -152,376 +132,319 @@ fn layout_target_is_focused(
     layout
         .focused_pane_id
         .as_ref()
-        .is_some_and(|focused| focused == &target.0)
+        .is_some_and(|id| id == &target.0)
         || layout
             .panes
             .iter()
-            .any(|pane| pane.pane_id == target.0 && pane.focused)
+            .any(|p| p.pane_id == target.0 && p.focused)
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct ReplayResult {
-    pane_mapping: HashMap<PaneId, PaneId>,
-}
-
-fn replay_layout_tree<R: CommandRunner>(
-    herdr_bin: &str,
-    runner: &mut R,
-    root: &LayoutNode,
-    root_temp_pane: PaneId,
-    target: &PaneId,
-) -> Result<ReplayResult> {
-    let mut pane_mapping = HashMap::new();
-    replay_node(
-        herdr_bin,
-        runner,
-        root,
-        root_temp_pane,
-        target,
-        &mut pane_mapping,
-    )?;
-    Ok(ReplayResult { pane_mapping })
-}
-
-fn replay_node<R: CommandRunner>(
-    herdr_bin: &str,
-    runner: &mut R,
-    node: &LayoutNode,
-    current_temp_pane: PaneId,
-    target: &PaneId,
-    pane_mapping: &mut HashMap<PaneId, PaneId>,
+/// Restores the source tab and closes only the explicit temporary tab.
+pub fn cleanup_session<C: HerdrClient>(
+    client: &mut C,
+    session: &PickerReturnContext,
+    temporary_tab_id: &str,
 ) -> Result<()> {
-    match node {
-        LayoutNode::Pane { source_pane_id, .. } => {
-            pane_mapping.insert(source_pane_id.clone(), current_temp_pane);
-            Ok(())
-        }
-        LayoutNode::Split {
-            direction,
-            ratio,
-            first,
-            second,
-            ..
-        } => {
-            let target_in_second = node_contains_source(second, target);
-            let split = {
-                let mut commands = HerdrCommands::new(herdr_bin, runner);
-                commands.pane_split(&current_temp_pane, *direction, *ratio, target_in_second)?
-            };
-            let second_temp_pane = PaneId::new(split.pane.pane_id);
-            replay_node(
-                herdr_bin,
-                runner,
-                first,
-                current_temp_pane,
-                target,
-                pane_mapping,
-            )?;
-            replay_node(
-                herdr_bin,
-                runner,
-                second,
-                second_temp_pane,
-                target,
-                pane_mapping,
-            )
+    if temporary_tab_id.is_empty() {
+        bail!("temporary picker tab id is missing");
+    }
+
+    if temporary_tab_id == session.return_tab_id {
+        bail!(
+            "refusing to close source tab {} as temporary picker tab",
+            temporary_tab_id
+        );
+    }
+
+    let mut first = None;
+
+    if let Err(e) = client.focus_tab(&session.return_tab_id) {
+        first = Some(e);
+    }
+
+    if let Err(e) = client.close_tab(temporary_tab_id) {
+        if first.is_none() {
+            first = Some(e);
         }
     }
+
+    first.map_or(Ok(()), Err)
 }
 
-fn node_contains_source(node: &LayoutNode, target: &PaneId) -> bool {
-    match node {
-        LayoutNode::Pane { source_pane_id, .. } => source_pane_id == target,
-        LayoutNode::Split { first, second, .. } => {
-            node_contains_source(first, target) || node_contains_source(second, target)
-        }
-    }
-}
-
-fn launch_pane_commands<R: CommandRunner>(
-    herdr_bin: &str,
-    runner: &mut R,
-    binary_path: &Path,
-    target_temp_pane_id: &PaneId,
-    snapshot_file: &SnapshotFile,
-    pane_mapping: &HashMap<PaneId, PaneId>,
+pub fn zoom_picker<C: HerdrClient>(
+    client: &mut C,
+    snapshot: &PickerSnapshot,
+    pane_id: &PaneId,
 ) -> Result<()> {
-    let picker_command = picker_command(binary_path, &snapshot_file.path);
-    for temp_pane in pane_mapping.values() {
-        let command = if temp_pane == target_temp_pane_id {
-            picker_command.as_str()
-        } else {
-            inert_pane_command()
-        };
-        let mut commands = HerdrCommands::new(herdr_bin, runner);
-        commands.pane_run(temp_pane, command)?;
+    if snapshot.session.zoom_picker {
+        client.zoom_pane(pane_id)?;
     }
+
     Ok(())
 }
 
-/// Attempts to restore focus and close the temporary tab by explicit session ids.
-pub fn cleanup_session<R: CommandRunner>(
-    herdr_bin: &str,
-    runner: &mut R,
-    session: &TempTabSession,
-) -> Result<()> {
-    let mut first_error = None;
-    {
-        let mut commands = HerdrCommands::new(herdr_bin, runner);
-        if let Err(error) = commands.tab_focus(&session.return_tab_id) {
-            first_error = Some(error);
-        }
-    }
-    {
-        let mut commands = HerdrCommands::new(herdr_bin, runner);
-        if let Err(error) = commands.tab_close(&session.temp_tab_id) {
-            if first_error.is_none() {
-                first_error = Some(error);
-            }
-        }
-    }
-
-    match first_error {
-        Some(error) => Err(error),
-        None => Ok(()),
-    }
-}
-
-/// Runs picker input/copy flow for a loaded layout-tab snapshot.
 pub fn run_snapshot_picker(snapshot: &PickerSnapshot) -> Result<()> {
-    crate::picker::run_picker(snapshot)?;
-    Ok(())
+    crate::picker::run_picker(snapshot).map(|_| ())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::herdr::commands::tests::FakeRunner;
-    use crate::model::{Rect, SplitDirection};
+    use crate::herdr::client::AppliedLayout;
+    use crate::herdr::layout::{LayoutPane, LayoutSnapshot};
+    use crate::model::{
+        PaneTextCaptureMode, Rect, SourcePaneSnapshot, SplitDirection, VisibleViewport,
+    };
+    use anyhow::anyhow;
 
-    fn layout_json() -> &'static str {
-        r#"{"result":{"layout":{"area":{"x":0,"y":0,"width":100,"height":40},"focused_pane_id":"p2","panes":[{"focused":false,"pane_id":"p1","rect":{"x":0,"y":0,"width":40,"height":40}},{"focused":true,"pane_id":"p2","rect":{"x":40,"y":0,"width":60,"height":40}}],"splits":[{"direction":"right","ratio":0.4,"rect":{"x":0,"y":0,"width":100,"height":40}}],"tab_id":"t1","workspace_id":"w1","zoomed":false}}}"#
+    #[derive(Default)]
+    struct FakeClient {
+        layout: Option<LayoutSnapshot>,
+        calls: Vec<String>,
+        launch_paths: Option<(std::path::PathBuf, std::path::PathBuf)>,
+        fail_focus_pane: bool,
+        fail_focus_tab: bool,
     }
 
-    fn zoomed_layout_json() -> &'static str {
-        r#"{"result":{"layout":{"area":{"x":0,"y":0,"width":100,"height":40},"focused_pane_id":"p2","panes":[{"focused":false,"pane_id":"p1","rect":{"x":0,"y":0,"width":40,"height":40}},{"focused":true,"pane_id":"p2","rect":{"x":40,"y":0,"width":60,"height":40}}],"splits":[{"direction":"right","ratio":0.4,"rect":{"x":0,"y":0,"width":100,"height":40}}],"tab_id":"t1","workspace_id":"w1","zoomed":true}}}"#
+    impl HerdrClient for FakeClient {
+        fn pane_layout(&mut self, _pane: &PaneId) -> Result<LayoutSnapshot> {
+            self.calls.push("pane_layout".into());
+            self.layout.take().context("missing fake layout")
+        }
+
+        fn pane_read_visible(&mut self, _pane: &PaneId, lines: u16) -> Result<String> {
+            self.calls.push(format!("pane_read:{lines}"));
+            Ok("https://example.com".into())
+        }
+
+        fn apply_layout(
+            &mut self,
+            workspace_id: &str,
+            _tab_label: &str,
+            root: &LaunchLayoutNode,
+        ) -> Result<AppliedLayout> {
+            self.calls.push(format!("apply:{workspace_id}"));
+            self.launch_paths = picker_paths(root);
+            Ok(AppliedLayout {
+                tab_id: "w1:t2".into(),
+                picker_pane_id: PaneId::new("w1:p2"),
+            })
+        }
+
+        fn focus_pane(&mut self, pane: &PaneId) -> Result<()> {
+            self.calls.push(format!("focus_pane:{pane}"));
+            let (_, ready) = self.launch_paths.as_ref().context("missing launch paths")?;
+            assert!(!ready.exists(), "barrier released before picker focus");
+            if self.fail_focus_pane {
+                Err(anyhow!("focus failed"))
+            } else {
+                Ok(())
+            }
+        }
+
+        fn zoom_pane(&mut self, pane: &PaneId) -> Result<()> {
+            self.calls.push(format!("zoom:{pane}"));
+            Ok(())
+        }
+
+        fn focus_tab(&mut self, tab_id: &str) -> Result<()> {
+            self.calls.push(format!("focus_tab:{tab_id}"));
+            if self.fail_focus_tab {
+                Err(anyhow!("tab focus failed"))
+            } else {
+                Ok(())
+            }
+        }
+
+        fn close_tab(&mut self, tab_id: &str) -> Result<()> {
+            self.calls.push(format!("close_tab:{tab_id}"));
+            Ok(())
+        }
     }
 
-    fn zero_height_layout_json() -> &'static str {
-        r#"{"result":{"layout":{"area":{"x":0,"y":0,"width":80,"height":0},"focused_pane_id":"p1","panes":[{"focused":true,"pane_id":"p1","rect":{"x":0,"y":0,"width":80,"height":0}}],"splits":[],"tab_id":"t1","workspace_id":"w1","zoomed":false}}}"#
+    fn picker_paths(node: &LaunchLayoutNode) -> Option<(std::path::PathBuf, std::path::PathBuf)> {
+        match node {
+            LaunchLayoutNode::Pane { command }
+                if command.get(1).is_some_and(|argument| argument == "pick") =>
+            {
+                Some((command.get(3)?.into(), command.get(5)?.into()))
+            }
+            LaunchLayoutNode::Split { first, second, .. } => {
+                picker_paths(first).or_else(|| picker_paths(second))
+            }
+            _ => None,
+        }
+    }
+
+    fn source_layout(zoomed: bool) -> LayoutSnapshot {
+        LayoutSnapshot {
+            area: Rect::new(0, 0, 80, 24),
+            focused_pane_id: Some("w1:p1".into()),
+            panes: vec![LayoutPane {
+                focused: true,
+                pane_id: "w1:p1".into(),
+                rect: Rect::new(0, 0, 80, 24),
+            }],
+            splits: Vec::new(),
+            tab_id: Some("w1:t1".into()),
+            workspace_id: Some("w1".into()),
+            zoomed,
+        }
+    }
+
+    fn picker_snapshot(zoom_picker: bool) -> PickerSnapshot {
+        PickerSnapshot {
+            source: SourcePaneSnapshot {
+                target_pane_id: PaneId::new("w1:p1"),
+                source_tab_id: "w1:t1".into(),
+                workspace_id: "w1".into(),
+                source_panes: Vec::new(),
+                target_content_width: 80,
+                target_content_height: 24,
+                logical_lines: Vec::new(),
+                visible_viewport: Some(VisibleViewport {
+                    rows: Vec::new(),
+                    logical_lines: Vec::new(),
+                    segments: Vec::new(),
+                }),
+                capture_mode: PaneTextCaptureMode::ExactVisibleUnwrapped,
+            },
+            session: PickerReturnContext {
+                return_tab_id: "w1:t1".into(),
+                return_pane_id: PaneId::new("w1:p1"),
+                zoom_picker,
+            },
+            custom_patterns: Vec::new(),
+        }
     }
 
     #[test]
-    fn replay_split_tree_maps_source_to_temp_panes() {
-        let root = LayoutNode::Split {
+    fn conversion_preserves_argv_and_split() {
+        let tree = LayoutNode::Split {
             direction: SplitDirection::Right,
-            ratio: 0.4,
+            ratio: 0.37,
             first: Box::new(LayoutNode::Pane {
-                source_pane_id: PaneId::new("p1"),
-                rect: Rect::new(0, 0, 40, 40),
+                source_pane_id: PaneId::new("a"),
+                rect: Rect::new(0, 0, 1, 1),
             }),
             second: Box::new(LayoutNode::Pane {
-                source_pane_id: PaneId::new("p2"),
-                rect: Rect::new(40, 0, 60, 40),
+                source_pane_id: PaneId::new("b"),
+                rect: Rect::new(0, 0, 1, 1),
             }),
-            rect: Rect::new(0, 0, 100, 40),
+            rect: Rect::new(0, 0, 2, 1),
         };
-        let mut runner = FakeRunner::default();
-        runner.push_stdout(
-            r#"{"result":{"pane":{"pane_id":"temp2","tab_id":"tt","workspace_id":"w1"}}}"#,
+        let converted = convert_layout(
+            &tree,
+            &PaneId::new("b"),
+            Path::new("/a b/π'"),
+            Path::new("/s p"),
+            Path::new("/r p"),
         );
+        let LaunchLayoutNode::Split {
+            direction,
+            ratio,
+            first,
+            second,
+        } = converted
+        else {
+            panic!("expected split layout");
+        };
+        assert_eq!(direction, SplitDirection::Right);
+        assert_eq!(ratio, 0.37);
+        assert!(matches!(
+            first.as_ref(),
+            LaunchLayoutNode::Pane { command }
+                if command == &vec!["/a b/π'".to_string(), "idle".to_string()]
+        ));
+        assert!(matches!(
+            second.as_ref(),
+            LaunchLayoutNode::Pane { command }
+                if command.first().is_some_and(|value| value == "/a b/π'")
+                    && command.get(1).is_some_and(|value| value == "pick")
+        ));
+    }
 
-        let result = replay_layout_tree(
-            "herdr",
-            &mut runner,
-            &root,
-            PaneId::new("temp1"),
-            &PaneId::new("p2"),
+    #[test]
+    fn launch_focuses_picker_before_releasing_barrier() {
+        let mut client = FakeClient {
+            layout: Some(source_layout(false)),
+            ..FakeClient::default()
+        };
+
+        launch_layout_tab_picker(
+            &mut client,
+            &PaneId::new("w1:p1"),
+            Path::new("/tmp/herdr pluck"),
+            Vec::new(),
         )
         .unwrap();
 
         assert_eq!(
-            result.pane_mapping.get(&PaneId::new("p1")),
-            Some(&PaneId::new("temp1"))
-        );
-        assert_eq!(
-            result.pane_mapping.get(&PaneId::new("p2")),
-            Some(&PaneId::new("temp2"))
-        );
-        assert_eq!(
-            runner.calls[0],
-            vec![
-                "pane",
-                "split",
-                "temp1",
-                "--direction",
-                "right",
-                "--ratio",
-                "0.4",
-                "--focus"
+            client.calls,
+            [
+                "pane_layout",
+                "pane_read:24",
+                "apply:w1",
+                "focus_pane:w1:p2"
             ]
         );
-    }
-
-    #[test]
-    fn launch_creates_tab_replays_layout_and_runs_picker() {
-        let mut runner = FakeRunner::default();
-        runner.push_stdout(layout_json());
-        runner.push_stdout("https://example.com\n");
-        runner.push_stdout(r#"{"result":{"tab":{"tab_id":"tt","workspace_id":"w1"},"root_pane":{"pane_id":"tp1","tab_id":"tt","workspace_id":"w1"}}}"#);
-        runner.push_stdout(
-            r#"{"result":{"pane":{"pane_id":"tp2","tab_id":"tt","workspace_id":"w1"}}}"#,
-        );
-        runner.push_stdout(r#"{"result":{"type":"ok"}}"#);
-        runner.push_stdout(r#"{"result":{"type":"ok"}}"#);
-
-        let launch = launch_layout_tab_picker(
-            "herdr",
-            &mut runner,
-            &PaneId::new("p2"),
-            Path::new("/bin/herdr-pluck"),
-            vec![PatternSpec {
-                name: "custom".to_string(),
-                regex: "CUSTOM-[0-9]+".to_string(),
-                priority: 25,
-            }],
-        )
-        .unwrap();
-
-        assert_eq!(launch.target_temp_pane_id, PaneId::new("tp2"));
-        let expected_picker_command = "'/bin/herdr-pluck' pick --snapshot ".to_string()
-            + &crate::herdr::snapshot::shell_quote(
-                &launch.snapshot_file.path.display().to_string(),
-            );
-        assert!(runner.calls.iter().any(|call| call
-            == &vec![
-                "pane".to_string(),
-                "run".to_string(),
-                "tp2".to_string(),
-                expected_picker_command.clone(),
-            ]));
-        let snapshot = crate::herdr::snapshot::read_snapshot_file(&launch.snapshot_file.path)
-            .expect("snapshot should be readable");
-        assert_eq!(snapshot.custom_patterns[0].name, "custom");
-        let _ = std::fs::remove_file(launch.snapshot_file.path);
-    }
-
-    #[test]
-    fn zero_height_target_geometry_fails_before_reading_pane_text() {
-        let mut runner = FakeRunner::default();
-        runner.push_stdout(zero_height_layout_json());
-
-        let error = launch_layout_tab_picker(
-            "herdr",
-            &mut runner,
-            &PaneId::new("p1"),
-            Path::new("/bin/herdr-pluck"),
-            Vec::new(),
-        )
-        .unwrap_err();
-
-        assert!(error.to_string().contains("zero visible content height"));
-        assert_eq!(runner.calls.len(), 1);
-        assert_eq!(runner.calls[0][0..2], ["pane", "layout"]);
-    }
-
-    #[test]
-    fn launch_zooms_temp_target_when_source_target_is_zoomed() {
-        let mut runner = FakeRunner::default();
-        runner.push_stdout(zoomed_layout_json());
-        runner.push_stdout("https://example.com\n");
-        runner.push_stdout(r#"{"result":{"tab":{"tab_id":"tt","workspace_id":"w1"},"root_pane":{"pane_id":"tp1","tab_id":"tt","workspace_id":"w1"}}}"#);
-        runner.push_stdout(
-            r#"{"result":{"pane":{"pane_id":"tp2","tab_id":"tt","workspace_id":"w1"}}}"#,
-        );
-        runner.push_stdout(r#"{"result":{"type":"ok"}}"#);
-        runner.push_stdout(r#"{"result":{"type":"ok"}}"#);
-        runner.push_stdout(r#"{"result":{"type":"ok"}}"#);
-
-        let launch = launch_layout_tab_picker(
-            "herdr",
-            &mut runner,
-            &PaneId::new("p2"),
-            Path::new("/bin/herdr-pluck"),
-            Vec::new(),
-        )
-        .unwrap();
-
-        let zoom_call = vec![
-            "pane".to_string(),
-            "zoom".to_string(),
-            "tp2".to_string(),
-            "--on".to_string(),
-        ];
-        let zoom_index = runner
-            .calls
-            .iter()
-            .position(|call| call == &zoom_call)
-            .expect("expected temp target pane to be zoomed");
-        let first_run_index = runner
-            .calls
-            .iter()
-            .position(|call| call.get(1).is_some_and(|arg| arg == "run"))
-            .expect("expected pane run commands");
-        assert!(zoom_index < first_run_index);
-
-        let snapshot = crate::herdr::snapshot::read_snapshot_file(&launch.snapshot_file.path)
-            .expect("snapshot should be readable");
-        assert_eq!(snapshot.source.target_content_width, 97);
-        assert_eq!(snapshot.source.target_content_height, 38);
-        let _ = std::fs::remove_file(launch.snapshot_file.path);
-    }
-
-    #[test]
-    fn zoom_failure_cleans_up_session() {
-        let mut runner = FakeRunner::default();
-        runner.push_stdout(zoomed_layout_json());
-        runner.push_stdout("https://example.com\n");
-        runner.push_stdout(r#"{"result":{"tab":{"tab_id":"tt","workspace_id":"w1"},"root_pane":{"pane_id":"tp1","tab_id":"tt","workspace_id":"w1"}}}"#);
-        runner.push_stdout(
-            r#"{"result":{"pane":{"pane_id":"tp2","tab_id":"tt","workspace_id":"w1"}}}"#,
-        );
-        runner.push_failure("zoom failed");
-        runner.push_stdout(r#"{"result":{"type":"ok"}}"#);
-        runner.push_stdout(r#"{"result":{"type":"ok"}}"#);
-
-        let error = launch_layout_tab_picker(
-            "herdr",
-            &mut runner,
-            &PaneId::new("p2"),
-            Path::new("/bin/herdr-pluck"),
-            Vec::new(),
-        )
-        .unwrap_err();
-
-        assert!(error.to_string().contains("zoom failed"));
-        assert!(runner
-            .calls
-            .iter()
-            .any(|call| call == &vec!["tab".to_string(), "focus".to_string(), "t1".to_string(),]));
-        assert!(runner
-            .calls
-            .iter()
-            .any(|call| call == &vec!["tab".to_string(), "close".to_string(), "tt".to_string(),]));
-    }
-
-    #[test]
-    fn failed_launch_cleanup_removes_snapshot_file() {
-        let path =
-            std::env::temp_dir().join(format!("herdr-pluck-cleanup-test-{}", std::process::id()));
-        std::fs::write(&path, b"snapshot").unwrap();
-        let snapshot_file = SnapshotFile { path: path.clone() };
-        let session = TempTabSession {
-            temp_tab_id: "tt".to_string(),
-            return_tab_id: "t1".to_string(),
-            return_pane_id: PaneId::new("p1"),
+        let (snapshot, ready) = client.launch_paths.unwrap();
+        assert!(ready.exists());
+        let files = PickerLaunchFiles {
+            snapshot_path: snapshot,
+            marker_temp_path: ready.with_extension("ready.tmp"),
+            ready_path: ready,
         };
-        let mut runner = FakeRunner::default();
-        runner.push_stdout(r#"{"result":{"type":"ok"}}"#);
-        runner.push_stdout(r#"{"result":{"type":"ok"}}"#);
+        files.cleanup().unwrap();
+    }
 
-        cleanup_failed_launch("herdr", &mut runner, &session, &snapshot_file);
+    #[test]
+    fn failed_focus_compensates_with_returned_tab_id_and_preserves_primary_error() {
+        let mut client = FakeClient {
+            layout: Some(source_layout(false)),
+            fail_focus_pane: true,
+            fail_focus_tab: true,
+            ..FakeClient::default()
+        };
 
-        assert!(!path.exists());
+        let error = launch_layout_tab_picker(
+            &mut client,
+            &PaneId::new("w1:p1"),
+            Path::new("/tmp/herdr-pluck"),
+            Vec::new(),
+        )
+        .unwrap_err();
+
+        assert_eq!(error.to_string(), "focus failed");
+        assert!(client.calls.contains(&"focus_tab:w1:t1".into()));
+        assert!(client.calls.contains(&"close_tab:w1:t2".into()));
+        let (snapshot, ready) = client.launch_paths.unwrap();
+        assert!(!snapshot.exists() && !ready.exists());
+    }
+
+    #[test]
+    fn cleanup_attempts_close_after_focus_failure_and_rejects_source_tab() {
+        let session = picker_snapshot(false).session;
+        let mut client = FakeClient {
+            fail_focus_tab: true,
+            ..FakeClient::default()
+        };
+
+        let error = cleanup_session(&mut client, &session, "w1:t2").unwrap_err();
+
+        assert_eq!(error.to_string(), "tab focus failed");
+        assert_eq!(client.calls, ["focus_tab:w1:t1", "close_tab:w1:t2"]);
+        assert!(cleanup_session(&mut client, &session, "w1:t1")
+            .unwrap_err()
+            .to_string()
+            .contains("refusing"));
+    }
+
+    #[test]
+    fn zooms_only_when_snapshot_requests_it() {
+        let mut client = FakeClient::default();
+        zoom_picker(&mut client, &picker_snapshot(false), &PaneId::new("w1:p2")).unwrap();
+        zoom_picker(&mut client, &picker_snapshot(true), &PaneId::new("w1:p2")).unwrap();
+        assert_eq!(client.calls, ["zoom:w1:p2"]);
     }
 }

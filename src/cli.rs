@@ -17,7 +17,7 @@ pub struct Cli {
 
 #[derive(Debug, Clone, PartialEq, Eq, Subcommand)]
 pub enum Command {
-    /// Action entrypoint: recreate the current layout in a temporary picker tab.
+    /// Action entrypoint: apply an argv-backed temporary picker layout.
     Open {
         /// Override the pane to pluck from. Defaults to Herdr invocation context.
         #[arg(long)]
@@ -29,7 +29,14 @@ pub enum Command {
         /// Temp JSON snapshot path produced by `open`.
         #[arg(long)]
         snapshot: PathBuf,
+        /// One-shot launch barrier released after layout application.
+        #[arg(long)]
+        ready: PathBuf,
     },
+
+    /// Internal shell-free placeholder for non-picker panes.
+    #[command(hide = true)]
+    Idle,
 }
 
 pub fn run() -> Result<()> {
@@ -48,9 +55,10 @@ pub fn run_with(cli: Cli) -> Result<()> {
 
             adapter.open_layout_tab_picker(&target)?;
         }
-        Command::Pick { snapshot } => {
-            adapter.run_picker_from_snapshot(&snapshot)?;
+        Command::Pick { snapshot, ready } => {
+            adapter.run_picker_from_snapshot(&snapshot, &ready)?;
         }
+        Command::Idle => crate::herdr::run_idle()?,
     }
 
     Ok(())

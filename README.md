@@ -8,7 +8,7 @@ Invoke the plugin while a pane is focused, type the displayed hint for the token
 
 ## Requirements
 
-- Herdr 0.7.0 or newer
+- Herdr 0.7.4 or newer
 - For release installs, a download tool:
     - `curl` or `wget`
 - Rust/Cargo only when forcing a source build or when no matching prebuilt binary is available

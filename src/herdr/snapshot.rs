@@ -1,73 +1,91 @@
 use crate::herdr::layout::{derive_source_geometry, derive_source_pane_geometries, LayoutSnapshot};
 use crate::model::{
-    PaneId, PaneTextCaptureMode, PatternSpec, PickerSnapshot, SourcePaneSnapshot, TempTabSession,
-    VisibleViewport,
+    PaneId, PaneTextCaptureMode, PatternSpec, PickerReturnContext, PickerSnapshot,
+    SourcePaneSnapshot, VisibleViewport,
 };
-use anyhow::{Context, Result};
+use anyhow::{bail, Context, Result};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::thread;
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-static SNAPSHOT_COUNTER: AtomicU64 = AtomicU64::new(0);
+static FILE_COUNTER: AtomicU64 = AtomicU64::new(0);
 
-/// Picker snapshot transport selected by the Herdr launcher after considering payload constraints.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum SnapshotTransport {
-    EnvJson,
-    TempFile,
-}
-
-/// Constraints used to choose how a picker snapshot is passed to the temporary pane process.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct SnapshotTransportConstraints {
-    pub payload_bytes: usize,
-    pub command_involves_shell: bool,
-    pub supports_direct_env: bool,
-}
-
-impl SnapshotTransportConstraints {
-    pub const SAFE_ENV_JSON_BYTES: usize = 16 * 1024;
-
-    /// Chooses the simplest safe transport, reserving temp files for large or shell-fragile payloads.
-    pub fn choose_transport(self) -> SnapshotTransport {
-        if self.supports_direct_env
-            && !self.command_involves_shell
-            && self.payload_bytes <= Self::SAFE_ENV_JSON_BYTES
-        {
-            SnapshotTransport::EnvJson
-        } else {
-            SnapshotTransport::TempFile
-        }
-    }
-}
-
-/// Filesystem-backed picker snapshot owned by the temporary Herdr session.
+/// Files used to transfer picker state and release its launch barrier.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct SnapshotFile {
-    pub path: PathBuf,
+pub struct PickerLaunchFiles {
+    pub snapshot_path: PathBuf,
+    pub ready_path: PathBuf,
+    pub(crate) marker_temp_path: PathBuf,
 }
 
-/// Chooses the currently supported picker snapshot transport for `pane run` launches.
-pub fn choose_picker_snapshot_transport(snapshot: &PickerSnapshot) -> Result<SnapshotTransport> {
-    let payload_bytes = serde_json::to_vec(snapshot)
-        .context("failed to serialize picker snapshot for transport choice")?
-        .len();
-    Ok(SnapshotTransportConstraints {
-        payload_bytes,
-        command_involves_shell: true,
-        supports_direct_env: false,
+impl PickerLaunchFiles {
+    /// Allocates unique absent paths and writes the snapshot.
+    pub fn create(snapshot: &PickerSnapshot) -> Result<Self> {
+        let stem = unique_stem();
+        let files = Self {
+            snapshot_path: std::env::temp_dir().join(format!("{stem}.json")),
+            ready_path: std::env::temp_dir().join(format!("{stem}.ready")),
+            marker_temp_path: std::env::temp_dir().join(format!("{stem}.ready.tmp")),
+        };
+        files.cleanup()?;
+        let json = serde_json::to_vec(snapshot).context("failed to serialize picker snapshot")?;
+        fs::write(&files.snapshot_path, json)
+            .with_context(|| format!("failed to write {}", files.snapshot_path.display()))?;
+        Ok(files)
     }
-    .choose_transport())
+
+    /// Atomically releases the picker after layout construction completes.
+    pub fn signal_ready(&self) -> Result<()> {
+        fs::write(&self.marker_temp_path, b"ready")?;
+        fs::rename(&self.marker_temp_path, &self.ready_path).with_context(|| {
+            format!(
+                "failed to signal picker readiness at {}",
+                self.ready_path.display()
+            )
+        })
+    }
+
+    /// Removes all launch files, ignoring already-removed files.
+    pub fn cleanup(&self) -> Result<()> {
+        let mut first = None;
+        for path in [
+            &self.snapshot_path,
+            &self.ready_path,
+            &self.marker_temp_path,
+        ] {
+            if let Err(error) = remove_file(path) {
+                if first.is_none() {
+                    first = Some(error);
+                }
+            }
+        }
+        first.map_or(Ok(()), Err)
+    }
 }
 
-/// Builds the immutable picker snapshot from source layout, text, and cleanup session ids.
+/// Waits a bounded duration for the launch barrier.
+pub fn wait_for_ready(path: &Path, timeout: Duration) -> Result<()> {
+    let started = Instant::now();
+    while !path.exists() {
+        if started.elapsed() >= timeout {
+            bail!(
+                "timed out waiting for Herdr layout launch barrier at {}",
+                path.display()
+            );
+        }
+        thread::sleep(Duration::from_millis(10));
+    }
+    Ok(())
+}
+
 pub fn build_source_snapshot(
     layout: &LayoutSnapshot,
     target: &PaneId,
     logical_lines: Vec<String>,
     visible_viewport: Option<VisibleViewport>,
-    session: TempTabSession,
+    session: PickerReturnContext,
     custom_patterns: Vec<PatternSpec>,
 ) -> Result<PickerSnapshot> {
     let source_tab_id = layout
@@ -79,23 +97,18 @@ pub fn build_source_snapshot(
         .clone()
         .context("pane layout did not include workspace id")?;
     let source_panes = derive_source_pane_geometries(layout);
-    let target_geometry = derive_source_geometry(layout, target);
-    let (target_content_width, target_content_height) = (
-        target_geometry.source_content_rect.width,
-        target_geometry.source_content_rect.height,
-    );
+    let geometry = derive_source_geometry(layout, target);
     if !source_panes.iter().any(|pane| pane.pane_id == *target) {
-        anyhow::bail!("target pane geometry missing from source layout");
+        bail!("target pane geometry missing from source layout");
     }
-
     Ok(PickerSnapshot {
         source: SourcePaneSnapshot {
             target_pane_id: target.clone(),
             source_tab_id,
             workspace_id,
             source_panes,
-            target_content_width,
-            target_content_height,
+            target_content_width: geometry.source_content_rect.width,
+            target_content_height: geometry.source_content_rect.height,
             logical_lines,
             visible_viewport,
             capture_mode: PaneTextCaptureMode::ExactVisibleUnwrapped,
@@ -105,132 +118,50 @@ pub fn build_source_snapshot(
     })
 }
 
-/// Writes a picker snapshot to a unique temp JSON file.
-pub fn write_snapshot_file(snapshot: &PickerSnapshot) -> Result<SnapshotFile> {
-    let json = serde_json::to_vec(snapshot).context("failed to serialize picker snapshot")?;
-    let path = unique_snapshot_path();
-    fs::write(&path, json).with_context(|| format!("failed to write {}", path.display()))?;
-    Ok(SnapshotFile { path })
-}
-
-/// Loads a picker snapshot from a temp JSON file.
 pub fn read_snapshot_file(path: &Path) -> Result<PickerSnapshot> {
     let bytes = fs::read(path).with_context(|| format!("failed to read {}", path.display()))?;
     serde_json::from_slice(&bytes).with_context(|| format!("failed to parse {}", path.display()))
 }
 
-/// Removes a temp snapshot file, ignoring not-found races.
-pub fn remove_snapshot_file(path: &Path) -> Result<()> {
+fn remove_file(path: &Path) -> Result<()> {
     match fs::remove_file(path) {
         Ok(()) => Ok(()),
-        Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(()),
-        Err(err) => Err(err).with_context(|| format!("failed to remove {}", path.display())),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(e) => Err(e).with_context(|| format!("failed to remove {}", path.display())),
     }
 }
-
-/// Shell-quotes one argument for `pane run`, which submits a command string to the pane shell.
-pub fn shell_quote(text: &str) -> String {
-    format!("'{}'", text.replace('\'', "'\\''"))
-}
-
-/// Builds the command string submitted to the temporary picker pane.
-pub fn picker_command(binary_path: &Path, snapshot_path: &Path) -> String {
-    format!(
-        "{} pick --snapshot {}",
-        shell_quote(&binary_path.display().to_string()),
-        shell_quote(&snapshot_path.display().to_string())
-    )
-}
-
-/// Quiet long-running command for non-target panes in the temporary layout tab.
-pub fn inert_pane_command() -> &'static str {
-    "printf '\\033[2J\\033[H'; sleep 86400"
-}
-
-fn unique_snapshot_path() -> PathBuf {
+fn unique_stem() -> String {
     let millis = SystemTime::now()
         .duration_since(UNIX_EPOCH)
-        .map(|duration| duration.as_millis())
+        .map(|d| d.as_millis())
         .unwrap_or_default();
-    let counter = SNAPSHOT_COUNTER.fetch_add(1, Ordering::Relaxed);
-    std::env::temp_dir().join(format!(
-        "herdr-pluck-{millis}-{}-{counter}.json",
-        std::process::id()
-    ))
+    let counter = FILE_COUNTER.fetch_add(1, Ordering::Relaxed);
+    format!("herdr-pluck-{millis}-{}-{counter}", std::process::id())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::model::{Rect, SourcePaneGeometry};
-
     #[test]
-    fn snapshot_transport_uses_temp_file_for_shell_commands() {
-        let constraints = SnapshotTransportConstraints {
-            payload_bytes: 512,
-            command_involves_shell: true,
-            supports_direct_env: true,
-        };
-
-        assert_eq!(constraints.choose_transport(), SnapshotTransport::TempFile);
+    fn barrier_releases_and_cleanup_is_idempotent() {
+        let path = std::env::temp_dir().join(format!("pluck-barrier-test-{}", std::process::id()));
+        let _ = fs::remove_file(&path);
+        let writer = path.clone();
+        thread::spawn(move || {
+            thread::sleep(Duration::from_millis(20));
+            fs::write(writer, b"x").unwrap();
+        });
+        wait_for_ready(&path, Duration::from_secs(1)).unwrap();
+        remove_file(&path).unwrap();
+        remove_file(&path).unwrap();
     }
-
     #[test]
-    fn picker_snapshot_transport_is_connected_to_pane_run_constraints() {
-        let snapshot = test_snapshot();
-
-        assert_eq!(
-            choose_picker_snapshot_transport(&snapshot).unwrap(),
-            SnapshotTransport::TempFile
-        );
-    }
-
-    #[test]
-    fn snapshot_file_round_trips() {
-        let snapshot = test_snapshot();
-
-        let file = write_snapshot_file(&snapshot).unwrap();
-        assert_eq!(read_snapshot_file(&file.path).unwrap(), snapshot);
-        remove_snapshot_file(&file.path).unwrap();
-    }
-
-    fn test_snapshot() -> PickerSnapshot {
-        PickerSnapshot {
-            source: SourcePaneSnapshot {
-                target_pane_id: PaneId::new("p1"),
-                source_tab_id: "t1".to_string(),
-                workspace_id: "w1".to_string(),
-                source_panes: vec![SourcePaneGeometry {
-                    pane_id: PaneId::new("p1"),
-                    outer_rect: Rect::new(0, 0, 80, 24),
-                    content_rect: Rect::new(0, 0, 79, 24),
-                    content_width: 79,
-                    content_height: 24,
-                }],
-                target_content_width: 79,
-                target_content_height: 24,
-                logical_lines: vec!["https://example.com".to_string()],
-                visible_viewport: None,
-                capture_mode: PaneTextCaptureMode::RecentUnwrappedBottomApproximation,
-            },
-            session: TempTabSession {
-                temp_tab_id: "t2".to_string(),
-                return_tab_id: "t1".to_string(),
-                return_pane_id: PaneId::new("p1"),
-            },
-            custom_patterns: Vec::new(),
-        }
-    }
-
-    #[test]
-    fn picker_command_quotes_paths() {
-        let command = picker_command(
-            Path::new("/tmp/herdr pluck/bin"),
-            Path::new("/tmp/a'b.json"),
-        );
-        assert_eq!(
-            command,
-            "'/tmp/herdr pluck/bin' pick --snapshot '/tmp/a'\\''b.json'"
-        );
+    fn barrier_times_out() {
+        let path = std::env::temp_dir().join(format!("pluck-missing-{}", std::process::id()));
+        let _ = fs::remove_file(&path);
+        assert!(wait_for_ready(&path, Duration::from_millis(20))
+            .unwrap_err()
+            .to_string()
+            .contains("timed out"));
     }
 }

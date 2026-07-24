@@ -144,12 +144,12 @@ pub struct LogicalLineVisualSegment {
     pub col_end: usize,
 }
 
-/// Temporary layout-tab session ids required for explicit cleanup and focus restoration.
+/// Source location and zoom state restored after picker completion.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct TempTabSession {
-    pub temp_tab_id: String,
+pub struct PickerReturnContext {
     pub return_tab_id: String,
     pub return_pane_id: PaneId,
+    pub zoom_picker: bool,
 }
 
 /// Serializable regex pattern config resolved before the picker pane starts.
@@ -164,7 +164,7 @@ pub struct PatternSpec {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PickerSnapshot {
     pub source: SourcePaneSnapshot,
-    pub session: TempTabSession,
+    pub session: PickerReturnContext,
     #[serde(default)]
     pub custom_patterns: Vec<PatternSpec>,
 }
@@ -175,15 +175,6 @@ pub struct PickerSnapshot {
 pub enum SplitDirection {
     Right,
     Down,
-}
-
-impl SplitDirection {
-    pub fn as_cli_arg(self) -> &'static str {
-        match self {
-            Self::Right => "right",
-            Self::Down => "down",
-        }
-    }
 }
 
 /// Binary Herdr layout tree with source pane ids preserved at leaves.
