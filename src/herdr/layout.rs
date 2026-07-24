@@ -2,20 +2,8 @@ use crate::model::{
     LayoutNode, LayoutRecreationPlan, PaneId, Rect, SourceGeometrySnapshot, SourcePaneGeometry,
     SplitDirection,
 };
-use anyhow::{anyhow, Context, Result};
+use anyhow::{anyhow, Result};
 use serde::Deserialize;
-
-/// Top-level Herdr CLI response wrapper for `pane layout`.
-#[derive(Debug, Clone, Deserialize)]
-struct LayoutEnvelope {
-    result: LayoutResult,
-}
-
-/// `pane layout` response payload containing the layout snapshot.
-#[derive(Debug, Clone, Deserialize)]
-struct LayoutResult {
-    layout: LayoutSnapshot,
-}
 
 /// Herdr tab layout snapshot returned by `pane layout` in Herdr-global coordinates.
 #[derive(Debug, Clone, Deserialize)]
@@ -48,13 +36,6 @@ pub struct LayoutSplit {
     pub direction: SplitDirection,
     pub ratio: f32,
     pub rect: Rect,
-}
-
-/// Parses Herdr's `pane layout` CLI response.
-pub fn parse_layout_snapshot(bytes: &[u8]) -> Result<LayoutSnapshot> {
-    let envelope: LayoutEnvelope =
-        serde_json::from_slice(bytes).context("invalid pane layout JSON")?;
-    Ok(envelope.result.layout)
 }
 
 /// Builds a pure replay plan from Herdr layout data without running Herdr commands.

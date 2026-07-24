@@ -1,18 +1,18 @@
-pub mod commands;
+pub mod client;
 pub mod context;
 pub mod executor;
 pub mod layout;
+mod protocol;
 pub mod snapshot;
-pub mod socket;
+mod socket;
 
 use crate::config::resolve_pattern_specs;
-use crate::herdr::commands::ProcessCommandRunner;
+use crate::herdr::client::SocketHerdrClient;
 use crate::herdr::context::HerdrContext;
 use crate::herdr::executor::{
     cleanup_session, launch_layout_tab_picker, run_snapshot_picker, zoom_picker,
 };
 use crate::herdr::snapshot::{read_snapshot_file, wait_for_ready, PickerLaunchFiles};
-use crate::herdr::socket::UnixSocketLayoutApplier;
 use crate::model::PaneId;
 use anyhow::{Context, Result};
 use crossterm::{cursor, execute, terminal};
@@ -20,19 +20,21 @@ use std::io::{stdout, Write};
 use std::path::Path;
 use std::time::Duration;
 
-pub use layout::{derive_layout_recreation_plan, parse_layout_snapshot};
+pub use layout::derive_layout_recreation_plan;
 
 /// Narrow production adapter for Herdr layout launch and picker cleanup.
 #[derive(Debug, Clone)]
 pub struct HerdrAdapter {
     context: HerdrContext,
 }
+
 impl HerdrAdapter {
     pub fn from_env() -> Self {
         Self {
             context: HerdrContext::from_env(),
         }
     }
+
     pub fn target_pane_from_context(&self) -> Option<PaneId> {
         self.context.target_pane()
     }
@@ -40,16 +42,8 @@ impl HerdrAdapter {
     pub fn open_layout_tab_picker(&self, target: &PaneId) -> Result<()> {
         let binary = std::env::current_exe().context("failed to locate herdr-pluck binary")?;
         let patterns = resolve_pattern_specs(self.context.focused_pane_cwd().as_deref());
-        let mut runner = ProcessCommandRunner;
-        let mut applier = UnixSocketLayoutApplier::from_context(&self.context)?;
-        launch_layout_tab_picker(
-            &self.context.herdr_bin,
-            &mut runner,
-            &mut applier,
-            target,
-            &binary,
-            patterns,
-        )?;
+        let mut client = SocketHerdrClient::from_context(&self.context)?;
+        launch_layout_tab_picker(&mut client, target, &binary, patterns)?;
         Ok(())
     }
 
@@ -72,16 +66,11 @@ impl HerdrAdapter {
             ready_path: ready_path.to_path_buf(),
             marker_temp_path: ready_path.with_extension("ready.tmp"),
         };
-        let mut runner = ProcessCommandRunner;
+        let mut client = SocketHerdrClient::from_context(&self.context)?;
         let primary = wait_for_ready(ready_path, Duration::from_secs(10))
-            .and_then(|_| zoom_picker(&self.context.herdr_bin, &mut runner, &snapshot, &pane))
+            .and_then(|_| zoom_picker(&mut client, &snapshot, &pane))
             .and_then(|_| run_snapshot_picker(&snapshot));
-        let cleanup = cleanup_session(
-            &self.context.herdr_bin,
-            &mut runner,
-            &snapshot.session,
-            &temp_tab,
-        );
+        let cleanup = cleanup_session(&mut client, &snapshot.session, &temp_tab);
         let files_cleanup = files.cleanup();
         match primary {
             Err(e) => {
