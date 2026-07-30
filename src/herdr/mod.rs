@@ -13,7 +13,7 @@ use crate::herdr::executor::{
     cleanup_session, launch_layout_tab_picker, run_snapshot_picker, zoom_picker,
 };
 use crate::herdr::snapshot::{read_snapshot_file, wait_for_ready, PickerLaunchFiles};
-use crate::model::PaneId;
+use crate::model::{PaneId, PickerAction};
 use anyhow::{Context, Result};
 use crossterm::{cursor, execute, terminal};
 use std::io::{stdout, Write};
@@ -39,11 +39,28 @@ impl HerdrAdapter {
         self.context.target_pane()
     }
 
-    pub fn open_layout_tab_picker(&self, target: &PaneId) -> Result<()> {
+    /**
+     * Opens the picker that copies any supported visible token.
+     */
+    pub fn open_copy_picker(&self, target: &PaneId) -> Result<()> {
+        self.open_picker(target, PickerAction::Copy)
+    }
+
+    /**
+     * Opens the picker that launches browser-openable visible URLs.
+     */
+    pub fn open_url_picker(&self, target: &PaneId) -> Result<()> {
+        self.open_picker(target, PickerAction::OpenUrl)
+    }
+
+    fn open_picker(&self, target: &PaneId, action: PickerAction) -> Result<()> {
         let binary = std::env::current_exe().context("failed to locate herdr-pluck binary")?;
-        let patterns = resolve_pattern_specs(self.context.focused_pane_cwd().as_deref());
+        let patterns = match action {
+            PickerAction::Copy => resolve_pattern_specs(self.context.focused_pane_cwd().as_deref()),
+            PickerAction::OpenUrl => Vec::new(),
+        };
         let mut client = SocketHerdrClient::from_context(&self.context)?;
-        launch_layout_tab_picker(&mut client, target, &binary, patterns)?;
+        launch_layout_tab_picker(&mut client, target, &binary, action, patterns)?;
         Ok(())
     }
 

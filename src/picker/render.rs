@@ -1,7 +1,9 @@
 use crate::config::compile_pattern_specs;
 use crate::hints::{assign_hints, HintAssignments};
-use crate::model::{PickerOutcome, PickerSnapshot, RenderLine, RenderSpan, RenderStyle};
-use crate::patterns::find_matches;
+use crate::model::{
+    PickerAction, PickerOutcome, PickerSnapshot, RenderLine, RenderSpan, RenderStyle,
+};
+use crate::patterns::{find_matches, find_openable_urls};
 use crate::renderer::{render_inline_hints, render_visible_inline_hints, terminal};
 use anyhow::{Context, Result};
 
@@ -36,12 +38,18 @@ pub fn build_picker_view(snapshot: &PickerSnapshot) -> PickerView {
         .as_ref()
         .map(|viewport| viewport.logical_lines.as_slice())
         .unwrap_or(&snapshot.source.logical_lines);
-    let custom_patterns = compile_pattern_specs(&snapshot.custom_patterns);
-    let matches = find_matches(logical_lines, &custom_patterns);
+    let matches = match snapshot.action {
+        PickerAction::Copy => {
+            let custom_patterns = compile_pattern_specs(&snapshot.custom_patterns);
+            find_matches(logical_lines, &custom_patterns)
+        }
+        PickerAction::OpenUrl => find_openable_urls(logical_lines),
+    };
     let assignments = assign_hints(matches.clone());
 
     let lines = if assignments.is_empty() {
         no_matches_view(
+            snapshot.action,
             snapshot.source.target_content_width,
             snapshot.source.target_content_height,
         )
@@ -114,7 +122,7 @@ pub fn run_readonly_picker(snapshot: &PickerSnapshot) -> Result<PickerOutcome> {
     }
 }
 
-fn no_matches_view(width: u16, height: u16) -> Vec<RenderLine> {
+fn no_matches_view(action: PickerAction, width: u16, height: u16) -> Vec<RenderLine> {
     if width == 0 || height == 0 {
         return Vec::new();
     }
@@ -122,7 +130,10 @@ fn no_matches_view(width: u16, height: u16) -> Vec<RenderLine> {
     let width = width as usize;
     let height = height as usize;
     let mut lines = Vec::with_capacity(height);
-    let message = "Herdr Pluck: no copyable matches found";
+    let message = match action {
+        PickerAction::Copy => "Herdr Pluck: no copyable matches found",
+        PickerAction::OpenUrl => "Herdr Pluck: no openable URLs found",
+    };
     let hint = "Press any non-Enter key to close";
 
     for row in 0..height {
@@ -174,6 +185,7 @@ mod tests {
                 return_pane_id: PaneId::new("p1"),
                 zoom_picker: false,
             },
+            action: PickerAction::Copy,
             custom_patterns: Vec::new(),
         }
     }
@@ -190,6 +202,30 @@ mod tests {
             .spans
             .iter()
             .any(|span| span.style == RenderStyle::Hint && span.text == "a"));
+    }
+
+    #[test]
+    fn open_url_view_assigns_hints_only_to_openable_urls() {
+        let mut snapshot = snapshot(vec!["https://example.com ftp://host/repo /tmp/file"], 50, 1);
+        snapshot.action = PickerAction::OpenUrl;
+
+        let view = build_picker_view(&snapshot);
+
+        assert_eq!(view.hint_count(), 1);
+        assert_eq!(
+            view.assignments.copied_text_for_hint("a"),
+            Some("https://example.com")
+        );
+    }
+
+    #[test]
+    fn open_url_no_match_view_uses_action_specific_message() {
+        let mut snapshot = snapshot(vec!["ftp://host/repo"], 40, 3);
+        snapshot.action = PickerAction::OpenUrl;
+
+        let view = build_picker_view(&snapshot);
+
+        assert!(view.lines[0].spans[0].text.contains("no openable URLs"));
     }
 
     #[test]

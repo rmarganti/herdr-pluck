@@ -24,6 +24,13 @@ pub enum Command {
         target_pane: Option<String>,
     },
 
+    /// Action entrypoint: open a selected visible URL in the default browser.
+    OpenUrl {
+        /// Override the pane to pluck from. Defaults to Herdr invocation context.
+        #[arg(long)]
+        target_pane: Option<String>,
+    },
+
     /// Picker entrypoint: run inside the temporary layout-tab target pane.
     Pick {
         /// Temp JSON snapshot path produced by `open`.
@@ -48,12 +55,12 @@ pub fn run_with(cli: Cli) -> Result<()> {
 
     match cli.command {
         Command::Open { target_pane } => {
-            let target = target_pane
-                .map(PaneId::new)
-                .or_else(|| adapter.target_pane_from_context())
-                .context("could not determine target pane from --target-pane, HERDR_PANE_ID, HERDR_ACTIVE_PANE_ID, or Herdr context")?;
-
-            adapter.open_layout_tab_picker(&target)?;
+            let target = resolve_target(&adapter, target_pane)?;
+            adapter.open_copy_picker(&target)?;
+        }
+        Command::OpenUrl { target_pane } => {
+            let target = resolve_target(&adapter, target_pane)?;
+            adapter.open_url_picker(&target)?;
         }
         Command::Pick { snapshot, ready } => {
             adapter.run_picker_from_snapshot(&snapshot, &ready)?;
@@ -62,4 +69,11 @@ pub fn run_with(cli: Cli) -> Result<()> {
     }
 
     Ok(())
+}
+
+fn resolve_target(adapter: &HerdrAdapter, target_pane: Option<String>) -> Result<PaneId> {
+    target_pane
+        .map(PaneId::new)
+        .or_else(|| adapter.target_pane_from_context())
+        .context("could not determine target pane from --target-pane, HERDR_PANE_ID, HERDR_ACTIVE_PANE_ID, or Herdr context")
 }

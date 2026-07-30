@@ -160,11 +160,21 @@ pub struct PatternSpec {
     pub priority: u16,
 }
 
+/// Operation performed when the user selects a hinted match.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum PickerAction {
+    #[default]
+    Copy,
+    OpenUrl,
+}
+
 /// Full picker launch payload passed from the action process to picker mode.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PickerSnapshot {
     pub source: SourcePaneSnapshot,
     pub session: PickerReturnContext,
+    #[serde(default)]
+    pub action: PickerAction,
     #[serde(default)]
     pub custom_patterns: Vec<PatternSpec>,
 }
@@ -268,6 +278,7 @@ pub struct RenderLine {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum PickerOutcome {
     Copied { text: String },
+    OpenedUrl { url: String },
     Cancelled,
     NoMatches,
 }

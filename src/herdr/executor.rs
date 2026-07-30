@@ -1,7 +1,9 @@
 use crate::herdr::client::{HerdrClient, LaunchLayoutNode};
 use crate::herdr::layout::{derive_layout_recreation_plan, derive_source_geometry};
 use crate::herdr::snapshot::{build_source_snapshot, PickerLaunchFiles};
-use crate::model::{LayoutNode, PaneId, PatternSpec, PickerReturnContext, PickerSnapshot};
+use crate::model::{
+    LayoutNode, PaneId, PatternSpec, PickerAction, PickerReturnContext, PickerSnapshot,
+};
 use crate::viewport::map_visible_viewport;
 use anyhow::{bail, Context, Result};
 use std::path::Path;
@@ -11,6 +13,7 @@ pub fn launch_layout_tab_picker<C: HerdrClient>(
     client: &mut C,
     target: &PaneId,
     binary_path: &Path,
+    action: PickerAction,
     custom_patterns: Vec<PatternSpec>,
 ) -> Result<()> {
     let layout = client.pane_layout(target)?;
@@ -45,6 +48,7 @@ pub fn launch_layout_tab_picker<C: HerdrClient>(
         viewport.logical_lines.clone(),
         Some(viewport),
         return_context.clone(),
+        action,
         custom_patterns,
     )?;
 
@@ -62,7 +66,11 @@ pub fn launch_layout_tab_picker<C: HerdrClient>(
         .workspace_id
         .as_deref()
         .context("pane layout did not include workspace id")?;
-    let applied = match client.apply_layout(workspace_id, "Herdr Pluck", &root) {
+    let tab_label = match action {
+        PickerAction::Copy => "Herdr Pluck",
+        PickerAction::OpenUrl => "Herdr Pluck: Open URL",
+    };
+    let applied = match client.apply_layout(workspace_id, tab_label, &root) {
         Ok(value) => value,
         Err(error) => {
             let _ = files.cleanup();
@@ -314,6 +322,7 @@ mod tests {
                 return_pane_id: PaneId::new("w1:p1"),
                 zoom_picker,
             },
+            action: PickerAction::Copy,
             custom_patterns: Vec::new(),
         }
     }
@@ -375,6 +384,7 @@ mod tests {
             &mut client,
             &PaneId::new("w1:p1"),
             Path::new("/tmp/herdr pluck"),
+            PickerAction::Copy,
             Vec::new(),
         )
         .unwrap();
@@ -411,6 +421,7 @@ mod tests {
             &mut client,
             &PaneId::new("w1:p1"),
             Path::new("/tmp/herdr-pluck"),
+            PickerAction::Copy,
             Vec::new(),
         )
         .unwrap_err();

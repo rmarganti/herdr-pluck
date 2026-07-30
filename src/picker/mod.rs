@@ -1,5 +1,6 @@
 mod copy;
 mod input;
+mod open_url;
 pub mod render;
 mod session;
 

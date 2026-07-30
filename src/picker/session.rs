@@ -1,11 +1,15 @@
 use crate::clipboard::{Clipboard, SystemClipboard};
-use crate::model::{PickerOutcome, PickerSnapshot, RenderLine, RenderSpan, RenderStyle};
+use crate::model::{
+    PickerAction, PickerOutcome, PickerSnapshot, RenderLine, RenderSpan, RenderStyle,
+};
 use crate::picker::copy::copy_selected_text;
 use crate::picker::input::{
     CrosstermInputSource, InputDecision, InputSource, InputState, PickerInputEvent, RawModeGuard,
 };
+use crate::picker::open_url::open_selected_url;
 use crate::picker::render::build_picker_view;
 use crate::renderer::terminal;
+use crate::url_opener::{SystemUrlOpener, UrlOpener};
 use anyhow::{anyhow, Result};
 use std::io::{self, Write};
 
@@ -14,19 +18,22 @@ pub fn run_picker(snapshot: &PickerSnapshot) -> Result<PickerOutcome> {
     let mut stdout = io::stdout();
     let mut input = CrosstermInputSource;
     let clipboard = SystemClipboard;
+    let url_opener = SystemUrlOpener;
     let _raw_mode = RawModeGuard::enable()?;
-    run_picker_with(snapshot, &mut input, &clipboard, &mut stdout)
+    run_picker_with(snapshot, &mut input, &clipboard, &url_opener, &mut stdout)
 }
 
-pub(crate) fn run_picker_with<I, C, W>(
+pub(crate) fn run_picker_with<I, C, O, W>(
     snapshot: &PickerSnapshot,
     input: &mut I,
     clipboard: &C,
+    url_opener: &O,
     output: &mut W,
 ) -> Result<PickerOutcome>
 where
     I: InputSource,
     C: Clipboard,
+    O: UrlOpener,
     W: Write,
 {
     let view = build_picker_view(snapshot);
@@ -49,13 +56,23 @@ where
                     .assignments
                     .copied_text_for_hint(&hint)
                     .ok_or_else(|| anyhow!("accepted unknown picker hint {hint}"))?;
-                if let Err(error) = copy_selected_text(clipboard, text) {
-                    emit_copy_failure(output, text, &error)?;
+                let outcome = match snapshot.action {
+                    PickerAction::Copy => {
+                        copy_selected_text(clipboard, text).map(|()| PickerOutcome::Copied {
+                            text: text.to_string(),
+                        })
+                    }
+                    PickerAction::OpenUrl => {
+                        open_selected_url(url_opener, text).map(|()| PickerOutcome::OpenedUrl {
+                            url: text.to_string(),
+                        })
+                    }
+                };
+                if let Err(error) = outcome {
+                    emit_selection_failure(output, snapshot.action, text, &error)?;
                     return Err(error);
                 }
-                return Ok(PickerOutcome::Copied {
-                    text: text.to_string(),
-                });
+                return outcome;
             }
         }
     }
@@ -73,8 +90,17 @@ fn run_no_match_input(input: &mut impl InputSource) -> Result<PickerOutcome> {
     }
 }
 
-fn emit_copy_failure(output: &mut impl Write, text: &str, error: &anyhow::Error) -> Result<()> {
-    let message = format!("Herdr Pluck: failed to copy {text:?}: {error}");
+fn emit_selection_failure(
+    output: &mut impl Write,
+    action: PickerAction,
+    text: &str,
+    error: &anyhow::Error,
+) -> Result<()> {
+    let verb = match action {
+        PickerAction::Copy => "copy",
+        PickerAction::OpenUrl => "open",
+    };
+    let message = format!("Herdr Pluck: failed to {verb} {text:?}: {error}");
     let lines = vec![RenderLine {
         spans: vec![RenderSpan {
             text: message,
@@ -91,6 +117,7 @@ mod tests {
     use super::*;
     use crate::clipboard::{ClipboardError, CopySuccess};
     use crate::model::{PaneId, PaneTextCaptureMode, PickerReturnContext, SourcePaneSnapshot};
+    use crate::url_opener::{OpenUrlSuccess, UrlOpenError};
     use std::cell::RefCell;
 
     struct FakeInput {
@@ -132,6 +159,26 @@ mod tests {
         }
     }
 
+    #[derive(Default)]
+    struct FakeUrlOpener {
+        opened: RefCell<Vec<String>>,
+        error: Option<UrlOpenError>,
+    }
+
+    impl UrlOpener for FakeUrlOpener {
+        fn open(&self, url: &str) -> std::result::Result<OpenUrlSuccess, UrlOpenError> {
+            self.opened.borrow_mut().push(url.to_string());
+            self.error.clone().map_or_else(
+                || {
+                    Ok(OpenUrlSuccess {
+                        tool: "fake".into(),
+                    })
+                },
+                Err,
+            )
+        }
+    }
+
     fn snapshot(lines: Vec<&str>, width: u16, height: u16) -> PickerSnapshot {
         PickerSnapshot {
             source: SourcePaneSnapshot {
@@ -150,6 +197,7 @@ mod tests {
                 return_pane_id: PaneId::new("p1"),
                 zoom_picker: false,
             },
+            action: PickerAction::Copy,
             custom_patterns: Vec::new(),
         }
     }
@@ -164,6 +212,7 @@ mod tests {
             &snapshot(vec!["open https://example.com/path"], 40, 1),
             &mut input,
             &clipboard,
+            &FakeUrlOpener::default(),
             &mut output,
         )
         .unwrap();
@@ -181,6 +230,53 @@ mod tests {
     }
 
     #[test]
+    fn open_url_hint_uses_opener_without_copying() {
+        let mut snapshot = snapshot(vec!["open https://example.com/path"], 40, 1);
+        snapshot.action = PickerAction::OpenUrl;
+        let mut input = FakeInput::new(vec![PickerInputEvent::Char('a')]);
+        let clipboard = FakeClipboard::default();
+        let opener = FakeUrlOpener::default();
+        let mut output = Vec::new();
+
+        let outcome =
+            run_picker_with(&snapshot, &mut input, &clipboard, &opener, &mut output).unwrap();
+
+        assert_eq!(
+            outcome,
+            PickerOutcome::OpenedUrl {
+                url: "https://example.com/path".to_string()
+            }
+        );
+        assert!(clipboard.copied.borrow().is_empty());
+        assert_eq!(
+            opener.opened.borrow().as_slice(),
+            &["https://example.com/path"]
+        );
+    }
+
+    #[test]
+    fn opener_failure_is_reported_and_not_treated_as_success() {
+        let mut snapshot = snapshot(vec!["https://example.com"], 40, 1);
+        snapshot.action = PickerAction::OpenUrl;
+        let mut input = FakeInput::new(vec![PickerInputEvent::Char('a')]);
+        let clipboard = FakeClipboard::default();
+        let opener = FakeUrlOpener {
+            error: Some(UrlOpenError::NoToolFound { tool: "fake-open" }),
+            ..FakeUrlOpener::default()
+        };
+        let mut output = Vec::new();
+
+        let error =
+            run_picker_with(&snapshot, &mut input, &clipboard, &opener, &mut output).unwrap_err();
+
+        assert!(error.to_string().contains("failed to open selected URL"));
+        assert!(String::from_utf8(output)
+            .unwrap()
+            .contains("failed to open"));
+        assert!(clipboard.copied.borrow().is_empty());
+    }
+
+    #[test]
     fn duplicate_hint_copies_shared_text_once() {
         let mut input = FakeInput::new(vec![PickerInputEvent::Char('a')]);
         let clipboard = FakeClipboard::default();
@@ -194,6 +290,7 @@ mod tests {
             ),
             &mut input,
             &clipboard,
+            &FakeUrlOpener::default(),
             &mut output,
         )
         .unwrap();
@@ -220,6 +317,7 @@ mod tests {
             &snapshot(vec!["open https://example.com/path"], 40, 1),
             &mut input,
             &clipboard,
+            &FakeUrlOpener::default(),
             &mut output,
         )
         .unwrap();
@@ -239,6 +337,7 @@ mod tests {
                 &snapshot(vec!["open https://example.com/path"], 40, 1),
                 &mut input,
                 &clipboard,
+                &FakeUrlOpener::default(),
                 &mut output,
             )
             .unwrap();
@@ -258,6 +357,7 @@ mod tests {
             &snapshot(vec!["open https://example.com/path"], 40, 1),
             &mut input,
             &clipboard,
+            &FakeUrlOpener::default(),
             &mut output,
         )
         .unwrap();
@@ -280,6 +380,7 @@ mod tests {
             &snapshot(vec!["open https://example.com/path"], 40, 1),
             &mut input,
             &clipboard,
+            &FakeUrlOpener::default(),
             &mut output,
         )
         .unwrap_err();
@@ -300,6 +401,7 @@ mod tests {
             &snapshot(vec!["plain text only"], 30, 3),
             &mut input,
             &clipboard,
+            &FakeUrlOpener::default(),
             &mut output,
         )
         .unwrap();

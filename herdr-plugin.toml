@@ -2,7 +2,7 @@ id = "rmarganti.herdr-pluck"
 name = "Herdr Pluck"
 version = "0.2.0"
 min_herdr_version = "0.7.4"
-description = "Inline keyboard hints for copying visible terminal tokens from Herdr panes"
+description = "Inline keyboard hints for copying visible tokens or opening URLs from Herdr panes"
 platforms = ["linux", "macos"]
 
 [[build]]
@@ -13,3 +13,9 @@ id = "pluck"
 title = "Pluck visible token"
 contexts = ["pane", "workspace"]
 command = ["./bin/herdr-pluck", "open"]
+
+[[actions]]
+id = "open-url"
+title = "Open visible URL"
+contexts = ["pane", "workspace"]
+command = ["./bin/herdr-pluck", "open-url"]

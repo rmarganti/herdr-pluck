@@ -13,6 +13,7 @@ struct PatternDefinition {
     /// ie. `1` is the number one priority, while `5` is a lower priority
     priority: u16,
     regex: Regex,
+    trim_url_end: bool,
 }
 
 impl PatternDefinition {
@@ -30,7 +31,14 @@ impl PatternDefinition {
             name: name.into(),
             priority,
             regex: Regex::new(pattern)?,
+            trim_url_end: false,
         })
+    }
+
+    fn compile_url(pattern: &str) -> Self {
+        let mut definition = Self::compile("url", 10, pattern);
+        definition.trim_url_end = true;
+        definition
     }
 }
 
@@ -77,13 +85,25 @@ pub fn find_matches(
     find_matches_with_patterns(lines, &patterns)
 }
 
+/// Finds browser-openable URLs using only the built-in URL detector.
+pub fn find_openable_urls(lines: &[String]) -> Vec<MatchSpan> {
+    let url = &built_in_patterns()[0];
+    find_matches_with_patterns(lines, &[url])
+        .into_iter()
+        .filter(|span| {
+            let lower = span.text.to_ascii_lowercase();
+            lower.starts_with("http://")
+                || lower.starts_with("https://")
+                || lower.starts_with("file://")
+        })
+        .collect()
+}
+
 fn built_in_patterns() -> &'static [PatternDefinition] {
     BUILT_IN_PATTERNS.get_or_init(|| {
         vec![
-            PatternDefinition::compile(
-                "url",
-                10,
-                r#"((https?://|git@|git://|ssh://|ftp://|file:///)[^\s()"']+)"#,
+            PatternDefinition::compile_url(
+                r#"(((?i:https?://|git@|git://|ssh://|ftp://|file://))[^\s()"']+)"#,
             ),
             PatternDefinition::compile("git-status", 15, r#"(modified|deleted|deleted by us|new file): +(?<match>.+)"#),
             PatternDefinition::compile(
@@ -139,12 +159,21 @@ fn collect_candidates(lines: &[String], patterns: &[&PatternDefinition]) -> Vec<
                     continue;
                 };
 
+                let (end, text) = if pattern.trim_url_end {
+                    trim_url_end(line, regex_match.start(), regex_match.end())
+                } else {
+                    (regex_match.end(), regex_match.as_str().to_string())
+                };
+                if end == regex_match.start() {
+                    continue;
+                }
+
                 candidates.push(MatchCandidate {
                     span: MatchSpan {
                         line: line_idx,
                         start: regex_match.start(),
-                        end: regex_match.end(),
-                        text: regex_match.as_str().to_string(),
+                        end,
+                        text,
                         pattern: pattern.name.clone(),
                         priority: pattern.priority,
                     },
@@ -155,6 +184,28 @@ fn collect_candidates(lines: &[String], patterns: &[&PatternDefinition]) -> Vec<
     }
 
     candidates
+}
+
+fn trim_url_end(line: &str, start: usize, mut end: usize) -> (usize, String) {
+    while end > start {
+        let text = &line[start..end];
+        let Some(last) = text.chars().last() else {
+            break;
+        };
+        let trim = matches!(last, '.' | ',' | ';' | ':' | '!' | '?')
+            || matches!(last, ')' | ']' | '}')
+                && match last {
+                    ')' => text.matches(')').count() > text.matches('(').count(),
+                    ']' => text.matches(']').count() > text.matches('[').count(),
+                    '}' => text.matches('}').count() > text.matches('{').count(),
+                    _ => false,
+                };
+        if !trim {
+            break;
+        }
+        end -= last.len_utf8();
+    }
+    (end, line[start..end].to_string())
 }
 
 /// Resolves overlapping candidates by acceptance priority where lower numbers are higher priority.
@@ -248,12 +299,53 @@ mod tests {
     }
 
     #[test]
-    fn url_preserves_non_delimiter_trailing_punctuation() {
-        let matches =
-            find_matches_with_defaults_only(&lines(["see https://example.com/path., next"]));
-        let url = matches.iter().find(|span| span.pattern == "url").unwrap();
+    fn url_trims_sentence_punctuation() {
+        let matches = find_matches_with_defaults_only(&lines([
+            "see https://example.com/path., then https://example.com/what?!",
+        ]));
+        let urls = matches
+            .iter()
+            .filter(|span| span.pattern == "url")
+            .map(|span| span.text.as_str())
+            .collect::<Vec<_>>();
 
-        assert_eq!(url.text, "https://example.com/path.,");
+        assert_eq!(
+            urls,
+            vec!["https://example.com/path", "https://example.com/what"]
+        );
+    }
+
+    #[test]
+    fn openable_urls_support_owned_schemes_and_ignore_other_matches() {
+        let matches = find_openable_urls(&lines([
+            "HTTP://example.com HTTPS://secure.test file:///tmp/a file://server/share",
+            "ftp://host/a git://host/repo ssh://host/repo git@github.com:org/repo.git /tmp/a",
+        ]));
+        let urls = matches
+            .iter()
+            .map(|span| span.text.as_str())
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            urls,
+            vec![
+                "HTTP://example.com",
+                "HTTPS://secure.test",
+                "file:///tmp/a",
+                "file://server/share",
+            ]
+        );
+    }
+
+    #[test]
+    fn openable_urls_do_not_use_custom_patterns() {
+        let custom =
+            vec![CustomPatternDefinition::compile("url", 1, r#"https://custom\.test"#).unwrap()];
+        let all = find_matches(&lines(["https://custom.test"]), &custom);
+        let openable = find_openable_urls(&lines(["https://custom.test"]));
+
+        assert_eq!(all[0].priority, 1);
+        assert_eq!(openable[0].priority, 10);
     }
 
     #[test]

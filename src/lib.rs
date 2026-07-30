@@ -7,4 +7,5 @@ pub mod model;
 pub mod patterns;
 pub mod picker;
 pub mod renderer;
+pub mod url_opener;
 pub mod viewport;

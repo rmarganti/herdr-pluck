@@ -1,8 +1,8 @@
 # Herdr Pluck
 
-Herdr Pluck is a Herdr plugin for quickly copying visible terminal tokens with short keyboard hints, inspired by `tmux-fingers`.
+Herdr Pluck is a Herdr plugin for quickly copying visible terminal tokens or opening visible URLs with short keyboard hints, inspired by `tmux-fingers`.
 
-Invoke the plugin while a pane is focused, type the displayed hint for the token you want, and the selected text is copied to your system clipboard. Escape or Ctrl-C cancels.
+Invoke an action while a pane is focused and type the displayed hint for the item you want. The pluck action copies the selected text to your system clipboard, while the URL action opens the selection in your default browser. Escape or Ctrl-C cancels.
 
 ![Herdr Pluck demo](artifacts/pluck-demo-themed.gif)
 
@@ -12,10 +12,13 @@ Invoke the plugin while a pane is focused, type the displayed hint for the token
 - For release installs, a download tool:
     - `curl` or `wget`
 - Rust/Cargo only when forcing a source build or when no matching prebuilt binary is available
-- A system clipboard command:
+- For copying, a system clipboard command:
     - macOS: `pbcopy`
     - Linux Wayland: `wl-copy`
     - Linux X11: `xclip` or `xsel`
+- For opening URLs:
+    - macOS: `open`
+    - Linux: `xdg-open`
 
 ## Install
 
@@ -56,10 +59,11 @@ Verify Herdr can see the action:
 herdr plugin action list --plugin rmarganti.herdr-pluck
 ```
 
-The action id is:
+The action ids are:
 
 ```text
 rmarganti.herdr-pluck.pluck
+rmarganti.herdr-pluck.open-url
 ```
 
 ## Keybinding
@@ -72,6 +76,16 @@ key = "prefix+q"
 type = "plugin_action"
 command = "rmarganti.herdr-pluck.pluck"
 description = "pluck visible token"
+```
+
+To bind the dedicated URL action separately:
+
+```toml
+[[keys.command]]
+key = "prefix+o"
+type = "plugin_action"
+command = "rmarganti.herdr-pluck.open-url"
+description = "open visible URL"
 ```
 
 Reload Herdr config after editing:
@@ -88,10 +102,13 @@ herdr server reload-config
 4. Type the shown one- or two-letter hint to copy that token and close the picker.
 5. Press Escape or Ctrl-C to cancel without copying.
 
-You can also invoke the action from the CLI:
+The `open-url` action uses the same picker flow, but shows only `http://`, `https://`, and `file://` URLs and opens the selected URL through the system default handler without changing the clipboard.
+
+You can also invoke either action from the CLI:
 
 ```bash
 herdr plugin action invoke rmarganti.herdr-pluck.pluck
+herdr plugin action invoke rmarganti.herdr-pluck.open-url
 ```
 
 ## What gets matched
