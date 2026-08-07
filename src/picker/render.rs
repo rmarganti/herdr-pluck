@@ -4,6 +4,7 @@ use crate::model::{
     PickerAction, PickerOutcome, PickerSnapshot, RenderLine, RenderSpan, RenderStyle,
 };
 use crate::patterns::{find_matches, find_openable_urls};
+use crate::picker::input::CursorGuard;
 use crate::renderer::{render_inline_hints, render_visible_inline_hints, terminal};
 use anyhow::{Context, Result};
 
@@ -102,6 +103,7 @@ pub fn run_readonly_picker(snapshot: &PickerSnapshot) -> Result<PickerOutcome> {
 
     let view = build_readonly_picker_view(snapshot);
     let mut stdout = io::stdout();
+    let _cursor = CursorGuard::hide()?;
     terminal::emit_render_lines(&mut stdout, &view.lines)?;
     stdout.flush()?;
 

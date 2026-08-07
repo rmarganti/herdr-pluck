@@ -12,19 +12,23 @@ use std::io::Write;
 
 /// Emits abstract picker render lines to a terminal writer using v1 styling.
 pub fn emit_render_lines(writer: &mut impl Write, lines: &[RenderLine]) -> Result<()> {
-    queue!(writer, Clear(ClearType::All), MoveTo(0, 0))?;
+    queue!(writer, Clear(ClearType::All))?;
 
     for (line_index, line) in lines.iter().enumerate() {
+        queue!(writer, MoveTo(0, line_index as u16))?;
         for span in &line.spans {
             queue_style(writer, span.style)?;
             queue!(writer, Print(&span.text))?;
         }
-        if line_index + 1 < lines.len() {
-            queue!(writer, Print("\r\n"))?;
-        }
     }
 
-    queue!(writer, ResetColor, SetAttribute(Attribute::Reset))?;
+    // Cancel any wrap-pending state left by a full-width final row.
+    queue!(
+        writer,
+        MoveTo(0, 0),
+        ResetColor,
+        SetAttribute(Attribute::Reset)
+    )?;
     Ok(())
 }
 
@@ -89,7 +93,7 @@ mod tests {
     }
 
     #[test]
-    fn terminal_emission_separates_lines_with_crlf() {
+    fn terminal_emission_positions_lines_without_newlines() {
         let lines = vec![
             RenderLine {
                 spans: vec![RenderSpan {
@@ -109,24 +113,9 @@ mod tests {
         emit_render_lines(&mut output, &lines).unwrap();
         let output = String::from_utf8(output).unwrap();
 
-        assert!(strip_ansi(&output).contains("one\r\ntwo"));
-    }
-
-    fn strip_ansi(text: &str) -> String {
-        let mut output = String::new();
-        let mut chars = text.chars().peekable();
-        while let Some(ch) = chars.next() {
-            if ch == '\u{1b}' && chars.peek() == Some(&'[') {
-                chars.next();
-                for code_ch in chars.by_ref() {
-                    if code_ch.is_ascii_alphabetic() {
-                        break;
-                    }
-                }
-            } else {
-                output.push(ch);
-            }
-        }
-        output
+        assert!(output.contains("\u{1b}[1;1H"));
+        assert!(output.contains("\u{1b}[2;1H"));
+        assert!(!output.contains("\r\n"));
+        assert!(output.ends_with("\u{1b}[1;1H\u{1b}[0m\u{1b}[0m"));
     }
 }

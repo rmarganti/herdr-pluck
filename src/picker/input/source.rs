@@ -1,5 +1,7 @@
 use super::{input_event_from_crossterm, PickerInputEvent};
 use anyhow::{Context, Result};
+use crossterm::{cursor, execute};
+use std::io::{self, Write};
 
 /// Source of picker-domain input events.
 pub(crate) trait InputSource {
@@ -30,5 +32,25 @@ impl RawModeGuard {
 impl Drop for RawModeGuard {
     fn drop(&mut self) {
         let _ = crossterm::terminal::disable_raw_mode();
+    }
+}
+
+/// Hides the picker cursor and restores it when the picker exits.
+pub(crate) struct CursorGuard;
+
+impl CursorGuard {
+    pub(crate) fn hide() -> Result<Self> {
+        let mut stdout = io::stdout();
+        execute!(stdout, cursor::Hide).context("failed to hide picker cursor")?;
+        stdout.flush().context("failed to flush hidden cursor")?;
+        Ok(Self)
+    }
+}
+
+impl Drop for CursorGuard {
+    fn drop(&mut self) {
+        let mut stdout = io::stdout();
+        let _ = execute!(stdout, cursor::Show);
+        let _ = stdout.flush();
     }
 }

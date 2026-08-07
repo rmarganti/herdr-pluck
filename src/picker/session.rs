@@ -4,7 +4,8 @@ use crate::model::{
 };
 use crate::picker::copy::copy_selected_text;
 use crate::picker::input::{
-    CrosstermInputSource, InputDecision, InputSource, InputState, PickerInputEvent, RawModeGuard,
+    CrosstermInputSource, CursorGuard, InputDecision, InputSource, InputState, PickerInputEvent,
+    RawModeGuard,
 };
 use crate::picker::open_url::open_selected_url;
 use crate::picker::render::build_picker_view;
@@ -20,6 +21,7 @@ pub fn run_picker(snapshot: &PickerSnapshot) -> Result<PickerOutcome> {
     let clipboard = SystemClipboard;
     let url_opener = SystemUrlOpener;
     let _raw_mode = RawModeGuard::enable()?;
+    let _cursor = CursorGuard::hide()?;
     run_picker_with(snapshot, &mut input, &clipboard, &url_opener, &mut stdout)
 }
 
