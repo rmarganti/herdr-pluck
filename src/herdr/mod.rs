@@ -14,11 +14,11 @@ use crate::herdr::executor::{
 };
 use crate::herdr::snapshot::{read_snapshot_file, wait_for_ready, PickerLaunchFiles};
 use crate::model::{PaneId, PickerAction};
-use anyhow::{Context, Result};
+use anyhow::{bail, Context, Result};
 use crossterm::{cursor, execute, terminal};
 use std::io::{stdout, Write};
 use std::path::Path;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 pub use layout::derive_layout_recreation_plan;
 
@@ -86,6 +86,17 @@ impl HerdrAdapter {
         let mut client = SocketHerdrClient::from_context(&self.context)?;
         let primary = wait_for_ready(ready_path, Duration::from_secs(10))
             .and_then(|_| zoom_picker(&mut client, &snapshot, &pane))
+            .and_then(|_| {
+                if snapshot.session.zoom_picker {
+                    wait_for_terminal_size(
+                        snapshot.source.target_content_width,
+                        snapshot.source.target_content_height,
+                        Duration::from_secs(2),
+                    )
+                } else {
+                    Ok(())
+                }
+            })
             .and_then(|_| run_snapshot_picker(&snapshot));
         let cleanup = cleanup_session(&mut client, &snapshot.session, &temp_tab);
         let files_cleanup = files.cleanup();
@@ -105,6 +116,30 @@ impl HerdrAdapter {
                 Ok(())
             }
         }
+    }
+}
+
+/**
+ * Waits for Herdr to propagate an asynchronous pane resize to the picker PTY.
+ */
+fn wait_for_terminal_size(width: u16, height: u16, timeout: Duration) -> Result<()> {
+    let started = Instant::now();
+
+    loop {
+        let (current_width, current_height) =
+            terminal::size().context("failed to read picker terminal size")?;
+
+        if (current_width, current_height) == (width, height) {
+            return Ok(());
+        }
+
+        if started.elapsed() >= timeout {
+            bail!(
+                "timed out waiting for picker terminal resize to {width}x{height}; current size is {current_width}x{current_height}"
+            );
+        }
+
+        std::thread::sleep(Duration::from_millis(10));
     }
 }
 
