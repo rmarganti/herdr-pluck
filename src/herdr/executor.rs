@@ -66,6 +66,7 @@ pub fn launch_layout_tab_picker<C: HerdrClient>(
         .workspace_id
         .as_deref()
         .context("pane layout did not include workspace id")?;
+    // `layout.export` has no tab label, so the temporary tab deliberately keeps Pluck branding.
     let tab_label = match action {
         PickerAction::Copy => "Herdr Pluck",
         PickerAction::OpenUrl => "Herdr Pluck: Open URL",
@@ -113,10 +114,18 @@ fn convert_layout(
                     "--ready".into(),
                     ready.to_string_lossy().into_owned(),
                 ],
+                source_pane_id: Some(source_pane_id.clone()),
+                label: None,
+                cwd: None,
+                env: Default::default(),
             }
         }
-        LayoutNode::Pane { .. } => LaunchLayoutNode::Pane {
+        LayoutNode::Pane { source_pane_id, .. } => LaunchLayoutNode::Pane {
             command: vec![binary.to_string_lossy().into_owned(), "idle".into()],
+            source_pane_id: Some(source_pane_id.clone()),
+            label: None,
+            cwd: None,
+            env: Default::default(),
         },
         LayoutNode::Split {
             direction,
@@ -236,6 +245,7 @@ mod tests {
             Ok(AppliedLayout {
                 tab_id: "w1:t2".into(),
                 picker_pane_id: PaneId::new("w1:p2"),
+                pane_ids: Default::default(),
             })
         }
 
@@ -272,7 +282,7 @@ mod tests {
 
     fn picker_paths(node: &LaunchLayoutNode) -> Option<(std::path::PathBuf, std::path::PathBuf)> {
         match node {
-            LaunchLayoutNode::Pane { command }
+            LaunchLayoutNode::Pane { command, .. }
                 if command.get(1).is_some_and(|argument| argument == "pick") =>
             {
                 Some((command.get(3)?.into(), command.get(5)?.into()))
@@ -362,12 +372,12 @@ mod tests {
         assert_eq!(ratio, 0.37);
         assert!(matches!(
             first.as_ref(),
-            LaunchLayoutNode::Pane { command }
+            LaunchLayoutNode::Pane { command, .. }
                 if command == &vec!["/a b/π'".to_string(), "idle".to_string()]
         ));
         assert!(matches!(
             second.as_ref(),
-            LaunchLayoutNode::Pane { command }
+            LaunchLayoutNode::Pane { command, .. }
                 if command.first().is_some_and(|value| value == "/a b/π'")
                     && command.get(1).is_some_and(|value| value == "pick")
         ));

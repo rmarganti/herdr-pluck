@@ -1,6 +1,7 @@
 pub mod client;
 pub mod context;
 pub mod executor;
+pub mod exported_layout;
 pub mod layout;
 mod protocol;
 pub mod snapshot;
