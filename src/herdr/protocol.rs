@@ -302,7 +302,7 @@ fn map_applied_panes(
 fn find_picker_pane(response: &AppliedNode, request: &LaunchLayoutNode) -> Option<String> {
     match (response, request) {
         (AppliedNode::Pane { pane_id }, LaunchLayoutNode::Pane { command, .. })
-            if command.get(1).is_some_and(|arg| arg == "pick") =>
+            if command.get(1).is_some_and(|arg| arg == "coordinate") =>
         {
             Some(pane_id.clone())
         }
@@ -416,8 +416,8 @@ mod tests {
         let submitted = LaunchLayoutNode::Split {
             direction: SplitDirection::Right,
             ratio: 0.5,
-            first: Box::new(launch_pane("source-1", "idle")),
-            second: Box::new(launch_pane("source-2", "pick")),
+            first: Box::new(launch_pane("source-1", "render")),
+            second: Box::new(launch_pane("source-2", "coordinate")),
         };
         let applied = applied_layout(
             json!({"id":"x","result":{"type":"layout_apply","layout":{"tab_id":"w:t2","root":{"type":"split","first":{"type":"pane","pane_id":"w:p1"},"second":{"type":"pane","pane_id":"w:p2"}}}}}),
@@ -442,8 +442,8 @@ mod tests {
         let submitted = LaunchLayoutNode::Split {
             direction: SplitDirection::Right,
             ratio: 0.5,
-            first: Box::new(launch_pane("source-1", "idle")),
-            second: Box::new(launch_pane("source-2", "pick")),
+            first: Box::new(launch_pane("source-1", "render")),
+            second: Box::new(launch_pane("source-2", "coordinate")),
         };
         let error = applied_layout(
             json!({"id":"x","result":{"type":"layout_apply","layout":{"tab_id":"w:t2","root":{"type":"pane","pane_id":"w:p1"}}}}),

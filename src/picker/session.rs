@@ -1,6 +1,7 @@
 use crate::clipboard::{Clipboard, SystemClipboard};
 use crate::model::{
-    PickerAction, PickerOutcome, PickerSnapshot, RenderLine, RenderSpan, RenderStyle,
+    PaneId, PickerAction, PickerOutcome, PickerSnapshot, RenderLine, RenderSpan, RenderStyle,
+    TabPickerSnapshot,
 };
 use crate::picker::copy::copy_selected_text;
 use crate::picker::input::{
@@ -8,7 +9,7 @@ use crate::picker::input::{
     RawModeGuard,
 };
 use crate::picker::open_url::open_selected_url;
-use crate::picker::render::build_picker_view;
+use crate::picker::render::{build_picker_view, build_tab_picker_view};
 use crate::renderer::terminal;
 use crate::url_opener::{SystemUrlOpener, UrlOpener};
 use anyhow::{anyhow, Result};
@@ -77,6 +78,84 @@ where
                 return outcome;
             }
         }
+    }
+}
+
+/// Runs the sole input-owning worker against the global tab hint namespace.
+pub fn run_tab_picker(snapshot: &TabPickerSnapshot, source_pane: &PaneId) -> Result<PickerOutcome> {
+    let view = build_tab_picker_view(snapshot);
+    let pane = view
+        .panes
+        .iter()
+        .find(|pane| &pane.source_pane_id == source_pane)
+        .ok_or_else(|| anyhow!("source pane {source_pane} is missing from picker snapshot"))?;
+    let mut stdout = io::stdout();
+    let mut input = CrosstermInputSource;
+    let clipboard = SystemClipboard;
+    let url_opener = SystemUrlOpener;
+    let _raw_mode = RawModeGuard::enable()?;
+    let _cursor = CursorGuard::hide()?;
+    terminal::emit_render_lines(&mut stdout, &pane.lines)?;
+    stdout.flush()?;
+    run_tab_input(
+        snapshot,
+        &view.assignments,
+        &mut input,
+        &clipboard,
+        &url_opener,
+        &mut stdout,
+    )
+}
+
+fn run_tab_input<I: InputSource, C: Clipboard, O: UrlOpener, W: Write>(
+    snapshot: &TabPickerSnapshot,
+    assignments: &crate::hints::TabHintAssignments,
+    input: &mut I,
+    clipboard: &C,
+    url_opener: &O,
+    output: &mut W,
+) -> Result<PickerOutcome> {
+    let Some(width) = assignments.width() else {
+        return run_no_match_input(input);
+    };
+    let valid_hints = assignments.valid_hints().collect::<Vec<_>>();
+    let mut state = InputState::new(width);
+    loop {
+        match state.push(input.read_event()?, &valid_hints) {
+            InputDecision::Continue | InputDecision::InvalidHint => continue,
+            InputDecision::Cancel => return Ok(PickerOutcome::Cancelled),
+            InputDecision::CopyHint(hint) => {
+                let text = assignments
+                    .copied_text_for_hint(&hint)
+                    .ok_or_else(|| anyhow!("accepted unknown picker hint {hint}"))?;
+                return match snapshot.action {
+                    PickerAction::Copy => copy_selected_text(clipboard, text)
+                        .map(|()| PickerOutcome::Copied { text: text.into() }),
+                    PickerAction::OpenUrl => open_selected_url(url_opener, text)
+                        .map(|()| PickerOutcome::OpenedUrl { url: text.into() }),
+                }
+                .inspect_err(|error| {
+                    let _ = emit_selection_failure(output, snapshot.action, text, error);
+                });
+            }
+        }
+    }
+}
+
+/// Renders one pane's globally assigned hints without owning input or cleanup.
+pub fn run_tab_renderer(snapshot: &TabPickerSnapshot, source_pane: &PaneId) -> Result<()> {
+    let view = build_tab_picker_view(snapshot);
+    let pane = view
+        .panes
+        .iter()
+        .find(|pane| &pane.source_pane_id == source_pane)
+        .ok_or_else(|| anyhow!("source pane {source_pane} is missing from picker snapshot"))?;
+    let mut stdout = io::stdout();
+    let _cursor = CursorGuard::hide()?;
+    terminal::emit_render_lines(&mut stdout, &pane.lines)?;
+    stdout.flush()?;
+    loop {
+        std::thread::sleep(std::time::Duration::from_secs(3600));
     }
 }
 

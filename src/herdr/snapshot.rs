@@ -1,7 +1,7 @@
 use crate::herdr::layout::{derive_source_geometry, derive_source_pane_geometries, LayoutSnapshot};
 use crate::model::{
     PaneId, PaneTextCaptureMode, PatternSpec, PickerAction, PickerReturnContext, PickerSnapshot,
-    SourcePaneSnapshot, VisibleViewport,
+    SourcePaneSnapshot, TabPickerSnapshot, VisibleViewport,
 };
 use anyhow::{bail, Context, Result};
 use std::fs;
@@ -22,7 +22,7 @@ pub struct PickerLaunchFiles {
 
 impl PickerLaunchFiles {
     /// Allocates unique absent paths and writes the snapshot.
-    pub fn create(snapshot: &PickerSnapshot) -> Result<Self> {
+    pub fn create(snapshot: &impl serde::Serialize) -> Result<Self> {
         let stem = unique_stem();
         let files = Self {
             snapshot_path: std::env::temp_dir().join(format!("{stem}.json")),
@@ -121,6 +121,15 @@ pub fn build_source_snapshot(
 }
 
 pub fn read_snapshot_file(path: &Path) -> Result<PickerSnapshot> {
+    read_json_snapshot(path)
+}
+
+/// Reads a tab-wide snapshot shared by all picker workers.
+pub fn read_tab_snapshot_file(path: &Path) -> Result<TabPickerSnapshot> {
+    read_json_snapshot(path)
+}
+
+fn read_json_snapshot<T: serde::de::DeserializeOwned>(path: &Path) -> Result<T> {
     let bytes = fs::read(path).with_context(|| format!("failed to read {}", path.display()))?;
     serde_json::from_slice(&bytes).with_context(|| format!("failed to parse {}", path.display()))
 }

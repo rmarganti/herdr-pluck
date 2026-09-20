@@ -78,6 +78,19 @@ impl TabHintAssignments {
         &self.assignments
     }
 
+    /// Returns the fixed character width accepted by the coordinator.
+    pub fn width(&self) -> Option<usize> {
+        self.assignments
+            .first()
+            .map(|assignment| assignment.hint.chars().count())
+    }
+
+    pub fn valid_hints(&self) -> impl Iterator<Item = &str> {
+        self.assignments
+            .iter()
+            .map(|assignment| assignment.hint.as_str())
+    }
+
     /// Resolves input independently of which pane displays the selected hint.
     pub fn copied_text_for_hint(&self, hint: &str) -> Option<&str> {
         self.assignments
