@@ -38,6 +38,30 @@ pub enum ExportedLayoutNode {
 }
 
 impl ExportedLayoutNode {
+    /// Returns source pane identities in tree order.
+    pub fn pane_ids(&self) -> Result<Vec<PaneId>> {
+        let mut pane_ids = Vec::new();
+        self.collect_pane_ids(&mut pane_ids)?;
+        Ok(pane_ids)
+    }
+
+    fn collect_pane_ids(&self, pane_ids: &mut Vec<PaneId>) -> Result<()> {
+        match self {
+            Self::Pane { pane_id, .. } => {
+                pane_ids.push(
+                    pane_id
+                        .clone()
+                        .ok_or_else(|| anyhow::anyhow!("layout.export pane is missing pane_id"))?,
+                );
+                Ok(())
+            }
+            Self::Split { first, second, .. } => {
+                first.collect_pane_ids(pane_ids)?;
+                second.collect_pane_ids(pane_ids)
+            }
+        }
+    }
+
     /// Replaces every exported command without ever replaying source argv.
     pub fn replace_commands<F>(&self, command_for: &mut F) -> Result<LaunchLayoutNode>
     where
@@ -126,6 +150,33 @@ mod tests {
             LaunchLayoutNode::Pane { command, .. }
                 if command == &vec!["pluck", "source-2"]
         ));
+    }
+
+    #[test]
+    fn returns_pane_ids_in_tree_order() {
+        let exported = ExportedLayoutNode::Split {
+            direction: SplitDirection::Right,
+            ratio: 0.5,
+            first: Box::new(ExportedLayoutNode::Pane {
+                pane_id: Some(PaneId::new("p1")),
+                label: None,
+                cwd: None,
+                command: None,
+                env: HashMap::new(),
+            }),
+            second: Box::new(ExportedLayoutNode::Pane {
+                pane_id: Some(PaneId::new("p2")),
+                label: None,
+                cwd: None,
+                command: None,
+                env: HashMap::new(),
+            }),
+        };
+
+        assert_eq!(
+            exported.pane_ids().unwrap(),
+            vec![PaneId::new("p1"), PaneId::new("p2")]
+        );
     }
 
     #[test]

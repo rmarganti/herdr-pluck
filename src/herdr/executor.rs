@@ -6,7 +6,7 @@ use crate::model::{
     PickerReturnContext, PickerSnapshot, TabPickerSnapshot,
 };
 use crate::viewport::map_visible_viewport;
-use anyhow::{bail, Result};
+use anyhow::{bail, Context, Result};
 use std::path::Path;
 use std::time::Duration;
 
@@ -19,27 +19,43 @@ pub fn launch_layout_tab_picker<C: HerdrClient>(
     custom_patterns: Vec<PatternSpec>,
 ) -> Result<()> {
     let layout = client.pane_layout(target)?;
-    if layout.zoomed {
-        bail!("tab-wide picking does not yet support zoomed source tabs");
-    }
     let exported = client.export_layout(target)?;
     let geometries = derive_source_pane_geometries(&layout);
-    let mut panes = Vec::with_capacity(geometries.len());
-    for geometry in &geometries {
-        if geometry.content_height == 0 {
-            bail!(
-                "source pane {} has zero visible content height",
-                geometry.pane_id
-            );
+    let coordinator = exported.focused_pane_id.clone();
+    let exported_panes = exported.root.pane_ids()?;
+    let mut panes = Vec::with_capacity(exported_panes.len());
+    for pane_id in exported_panes {
+        let geometry = geometries
+            .iter()
+            .find(|geometry| geometry.pane_id == pane_id);
+        let visible = !exported.zoomed || pane_id == coordinator;
+        if !visible {
+            // Hidden leaves still need a worker for full-tree replay, but must not contribute hints.
+            panes.push(PickerPaneSnapshot {
+                source_pane_id: pane_id,
+                content_dimensions: PaneDimensions {
+                    width: 0,
+                    height: 0,
+                },
+                logical_lines: Vec::new(),
+                visible_viewport: None,
+                capture_mode: PaneTextCaptureMode::ExactVisibleUnwrapped,
+            });
+            continue;
         }
-        let visible_text = client.pane_read_visible(&geometry.pane_id, geometry.content_height)?;
+        let geometry = geometry
+            .with_context(|| format!("visible pane {pane_id} is missing from Herdr pane.layout"))?;
+        if geometry.content_height == 0 {
+            bail!("source pane {pane_id} has zero visible content height");
+        }
+        let visible_text = client.pane_read_visible(&pane_id, geometry.content_height)?;
         let viewport = map_visible_viewport(
             visible_text.lines().map(str::to_string).collect(),
             geometry.content_width,
             geometry.content_height,
         );
         panes.push(PickerPaneSnapshot {
-            source_pane_id: geometry.pane_id.clone(),
+            source_pane_id: pane_id,
             content_dimensions: PaneDimensions {
                 width: geometry.content_width,
                 height: geometry.content_height,
@@ -50,14 +66,13 @@ pub fn launch_layout_tab_picker<C: HerdrClient>(
         });
     }
 
-    let coordinator = exported.focused_pane_id.clone();
     if !panes.iter().any(|pane| pane.source_pane_id == coordinator) {
-        bail!("focused pane {coordinator} is missing from visible source geometry");
+        bail!("focused pane {coordinator} is missing from exported layout");
     }
     let return_context = PickerReturnContext {
         return_tab_id: exported.tab_id.clone(),
         return_pane_id: coordinator.clone(),
-        zoom_picker: false,
+        zoom_picker: exported.zoomed,
     };
     let snapshot = TabPickerSnapshot {
         panes,
@@ -113,7 +128,7 @@ pub fn launch_layout_tab_picker<C: HerdrClient>(
         }
     };
     let startup_result = wait_for_acknowledgements(&acknowledgement_paths, Duration::from_secs(10))
-        .and_then(|_| client.focus_pane(coordinator_pane))
+        .and_then(|_| focus_and_zoom_picker(client, coordinator_pane, return_context.zoom_picker))
         .and_then(|_| files.signal_ready());
 
     if let Err(error) = startup_result {
@@ -190,15 +205,17 @@ pub fn cleanup_session<C: HerdrClient>(
     first.map_or(Ok(()), Err)
 }
 
-pub fn zoom_picker<C: HerdrClient>(
+/// Focuses the coordinator and restores source zoom before workers render.
+fn focus_and_zoom_picker<C: HerdrClient>(
     client: &mut C,
-    snapshot: &PickerSnapshot,
     pane_id: &PaneId,
+    zoomed: bool,
 ) -> Result<()> {
-    if snapshot.session.zoom_picker {
+    client.focus_pane(pane_id)?;
+    if zoomed {
+        // pane.zoom responds only after Herdr applies the PTY resize; release workers afterward.
         client.zoom_pane(pane_id)?;
     }
-
     Ok(())
 }
 
@@ -233,6 +250,49 @@ mod tests {
         assert_eq!(render[1], "render");
         assert_eq!(render.last().map(String::as_str), Some("p2"));
         assert_eq!(coordinate[0], "/a b/pluck");
+    }
+
+    #[test]
+    fn focuses_then_zooms_the_mapped_coordinator() {
+        struct Client(Vec<&'static str>);
+        impl HerdrClient for Client {
+            fn pane_layout(&mut self, _: &PaneId) -> Result<crate::herdr::layout::LayoutSnapshot> {
+                unreachable!()
+            }
+            fn pane_read_visible(&mut self, _: &PaneId, _: u16) -> Result<String> {
+                unreachable!()
+            }
+            fn apply_layout(
+                &mut self,
+                _: &str,
+                _: &str,
+                _: &crate::herdr::client::LaunchLayoutNode,
+            ) -> Result<crate::herdr::client::AppliedLayout> {
+                unreachable!()
+            }
+            fn focus_pane(&mut self, _: &PaneId) -> Result<()> {
+                self.0.push("focus");
+                Ok(())
+            }
+            fn zoom_pane(&mut self, _: &PaneId) -> Result<()> {
+                self.0.push("zoom");
+                Ok(())
+            }
+            fn focus_tab(&mut self, _: &str) -> Result<()> {
+                unreachable!()
+            }
+            fn close_tab(&mut self, _: &str) -> Result<()> {
+                unreachable!()
+            }
+        }
+
+        let mut zoomed = Client(Vec::new());
+        focus_and_zoom_picker(&mut zoomed, &PaneId::new("mapped"), true).unwrap();
+        assert_eq!(zoomed.0, vec!["focus", "zoom"]);
+
+        let mut unzoomed = Client(Vec::new());
+        focus_and_zoom_picker(&mut unzoomed, &PaneId::new("mapped"), false).unwrap();
+        assert_eq!(unzoomed.0, vec!["focus"]);
     }
 
     #[test]

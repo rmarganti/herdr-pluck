@@ -76,7 +76,7 @@ impl SocketHerdrClient {
         let path = context
             .socket_path
             .clone()
-            .context("HERDR_SOCKET_PATH is missing; Herdr Pluck requires Herdr 0.7.4 or newer")?;
+            .context("HERDR_SOCKET_PATH is missing; Herdr Pluck requires Herdr 0.7.0 or newer")?;
         Ok(Self {
             transport: UnixSocketTransport::new(path),
         })
@@ -103,7 +103,9 @@ impl HerdrClient for SocketHerdrClient {
 
     fn export_layout(&mut self, pane: &PaneId) -> Result<ExportedLayout> {
         let (id, value) = self.call("layout.export", protocol::pane_target(&pane.0))?;
-        protocol::exported_layout(value, &id)
+        protocol::exported_layout(value, &id).with_context(|| {
+            "Herdr layout.export is unavailable or incompatible; Herdr Pluck requires Herdr 0.7.0 or newer"
+        })
     }
 
     fn pane_read_visible(&mut self, pane: &PaneId, lines: u16) -> Result<String> {
@@ -121,7 +123,9 @@ impl HerdrClient for SocketHerdrClient {
             "layout.apply",
             protocol::layout_apply_params(workspace_id, tab_label, root),
         )?;
-        protocol::applied_layout(value, &id, root)
+        protocol::applied_layout(value, &id, root).with_context(|| {
+            "Herdr layout.apply is unavailable or incompatible; Herdr Pluck requires Herdr 0.7.0 or newer"
+        })
     }
 
     fn focus_pane(&mut self, pane: &PaneId) -> Result<()> {
