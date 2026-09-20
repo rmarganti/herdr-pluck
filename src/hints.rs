@@ -1,4 +1,4 @@
-use crate::model::{HintAssignment, MatchSpan};
+use crate::model::{HintAssignment, MatchSpan, PaneId, PaneMatchSpan, TabHintAssignment};
 use std::collections::HashMap;
 use unicode_width::UnicodeWidthStr;
 
@@ -54,10 +54,71 @@ impl HintAssignments {
     }
 }
 
+/// Globally assigned tab hints, retaining pane ownership for each occurrence.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TabHintAssignments {
+    assignments: Vec<TabHintAssignment>,
+}
+
+impl TabHintAssignments {
+    pub fn new(assignments: Vec<TabHintAssignment>) -> Self {
+        Self { assignments }
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.assignments.is_empty()
+    }
+
+    /// Returns the number of unique selectable texts across the tab.
+    pub fn len(&self) -> usize {
+        self.assignments.len()
+    }
+
+    pub fn assignments(&self) -> &[TabHintAssignment] {
+        &self.assignments
+    }
+
+    /// Resolves input independently of which pane displays the selected hint.
+    pub fn copied_text_for_hint(&self, hint: &str) -> Option<&str> {
+        self.assignments
+            .iter()
+            .find(|assignment| assignment.hint == hint)
+            .map(|assignment| assignment.text.as_str())
+    }
+
+    /// Projects global assignments into the pane-local coordinates expected by the renderer.
+    pub fn for_pane(&self, pane_id: &PaneId) -> HintAssignments {
+        HintAssignments::new(
+            self.assignments
+                .iter()
+                .filter_map(|assignment| {
+                    let occurrences = assignment
+                        .occurrences
+                        .iter()
+                        .filter(|occurrence| occurrence.source_pane_id == *pane_id)
+                        .map(|occurrence| occurrence.span.clone())
+                        .collect::<Vec<_>>();
+                    (!occurrences.is_empty()).then(|| HintAssignment {
+                        hint: assignment.hint.clone(),
+                        text: assignment.text.clone(),
+                        occurrences,
+                    })
+                })
+                .collect(),
+        )
+    }
+}
+
 #[derive(Debug)]
 struct AssignmentBuilder {
     text: String,
     occurrences: Vec<MatchSpan>,
+}
+
+#[derive(Debug)]
+struct TabAssignmentBuilder {
+    text: String,
+    occurrences: Vec<PaneMatchSpan>,
 }
 
 pub fn hint_alphabet() -> &'static str {
@@ -140,6 +201,39 @@ pub fn assign_hints(matches: Vec<MatchSpan>) -> HintAssignments {
         .collect();
 
     HintAssignments::new(assignments)
+}
+
+/// Assigns one hint namespace in pane order, sharing hints for duplicate text across panes.
+pub fn assign_tab_hints(matches: Vec<PaneMatchSpan>) -> TabHintAssignments {
+    let mut by_text: HashMap<String, usize> = HashMap::new();
+    let mut ordered: Vec<TabAssignmentBuilder> = Vec::new();
+
+    for occurrence in matches {
+        if let Some(index) = by_text.get(&occurrence.span.text).copied() {
+            ordered[index].occurrences.push(occurrence);
+        } else if ordered.len() < MAX_HINT_CAPACITY {
+            let index = ordered.len();
+            by_text.insert(occurrence.span.text.clone(), index);
+            ordered.push(TabAssignmentBuilder {
+                text: occurrence.span.text.clone(),
+                occurrences: vec![occurrence],
+            });
+        }
+    }
+
+    let Some(width) = hint_width(ordered.len()) else {
+        return TabHintAssignments::new(Vec::new());
+    };
+    let assignments = ordered
+        .into_iter()
+        .zip(generate_hints(width))
+        .map(|(builder, hint)| TabHintAssignment {
+            hint,
+            text: builder.text,
+            occurrences: builder.occurrences,
+        })
+        .collect();
+    TabHintAssignments::new(assignments)
 }
 
 #[cfg(test)]

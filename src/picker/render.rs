@@ -1,7 +1,8 @@
 use crate::config::compile_pattern_specs;
-use crate::hints::{assign_hints, HintAssignments};
+use crate::hints::{assign_hints, assign_tab_hints, HintAssignments, TabHintAssignments};
 use crate::model::{
-    PickerAction, PickerOutcome, PickerSnapshot, RenderLine, RenderSpan, RenderStyle,
+    PaneMatchSpan, PickerAction, PickerOutcome, PickerPaneSnapshot, PickerSnapshot, RenderLine,
+    RenderSpan, RenderStyle, TabPickerSnapshot,
 };
 use crate::patterns::{find_matches, find_openable_urls};
 use crate::picker::input::CursorGuard;
@@ -21,6 +22,22 @@ impl PickerView {
     pub fn hint_count(&self) -> usize {
         self.assignments.len()
     }
+}
+
+/// Render output for one pane in a tab-wide picker.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TabPanePickerView {
+    pub source_pane_id: crate::model::PaneId,
+    pub lines: Vec<RenderLine>,
+    pub match_count: usize,
+}
+
+/// Pane-partitioned rendering with one tab-wide input namespace.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TabPickerView {
+    pub panes: Vec<TabPanePickerView>,
+    pub assignments: TabHintAssignments,
+    pub match_count: usize,
 }
 
 /// Rendered, readonly picker state derived from a captured pane snapshot.
@@ -75,6 +92,78 @@ pub fn build_picker_view(snapshot: &PickerSnapshot) -> PickerView {
         assignments,
         match_count: matches.len(),
     }
+}
+
+/// Builds pane-local render output while assigning and resolving hints tab-wide.
+pub fn build_tab_picker_view(snapshot: &TabPickerSnapshot) -> TabPickerView {
+    let custom_patterns = compile_pattern_specs(&snapshot.custom_patterns);
+    let pane_matches = snapshot
+        .panes
+        .iter()
+        .map(|pane| {
+            let logical_lines = pane_logical_lines(pane);
+            let matches = match snapshot.action {
+                PickerAction::Copy => find_matches(logical_lines, &custom_patterns),
+                PickerAction::OpenUrl => find_openable_urls(logical_lines),
+            };
+            (pane, matches)
+        })
+        .collect::<Vec<_>>();
+    let match_count = pane_matches.iter().map(|(_, matches)| matches.len()).sum();
+    let assignments = assign_tab_hints(
+        pane_matches
+            .iter()
+            .flat_map(|(pane, matches)| {
+                matches.iter().cloned().map(|span| PaneMatchSpan {
+                    source_pane_id: pane.source_pane_id.clone(),
+                    span,
+                })
+            })
+            .collect(),
+    );
+
+    let panes = pane_matches
+        .into_iter()
+        .map(|(pane, matches)| {
+            let local_assignments = assignments.for_pane(&pane.source_pane_id);
+            let dimensions = pane.content_dimensions;
+            let lines = if assignments.is_empty() {
+                no_matches_view(snapshot.action, dimensions.width, dimensions.height)
+            } else if let Some(viewport) = &pane.visible_viewport {
+                render_visible_inline_hints(
+                    viewport,
+                    &local_assignments,
+                    dimensions.width,
+                    dimensions.height,
+                )
+            } else {
+                render_inline_hints(
+                    &pane.logical_lines,
+                    &local_assignments,
+                    dimensions.width,
+                    dimensions.height,
+                )
+            };
+            TabPanePickerView {
+                source_pane_id: pane.source_pane_id.clone(),
+                lines,
+                match_count: matches.len(),
+            }
+        })
+        .collect();
+
+    TabPickerView {
+        panes,
+        assignments,
+        match_count,
+    }
+}
+
+fn pane_logical_lines(pane: &PickerPaneSnapshot) -> &[String] {
+    pane.visible_viewport
+        .as_ref()
+        .map(|viewport| viewport.logical_lines.as_slice())
+        .unwrap_or(&pane.logical_lines)
 }
 
 /// Builds the production readonly picker view from captured pane text.
@@ -167,7 +256,9 @@ fn fit_to_width(text: &str, width: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::model::{PaneId, PaneTextCaptureMode, PickerReturnContext, SourcePaneSnapshot};
+    use crate::model::{
+        PaneDimensions, PaneId, PaneTextCaptureMode, PickerReturnContext, SourcePaneSnapshot,
+    };
 
     fn snapshot(lines: Vec<&str>, width: u16, height: u16) -> PickerSnapshot {
         PickerSnapshot {
@@ -240,5 +331,74 @@ mod tests {
         assert_eq!(view.lines[0].spans[0].text.len(), 20);
         assert!(view.lines[0].spans[0].text.starts_with("Herdr Pluck"));
         assert!(view.lines[2].spans[0].text.starts_with("Press"));
+    }
+
+    fn tab_snapshot(panes: Vec<(&str, Vec<&str>)>) -> TabPickerSnapshot {
+        TabPickerSnapshot {
+            panes: panes
+                .into_iter()
+                .map(|(id, lines)| PickerPaneSnapshot {
+                    source_pane_id: PaneId::new(id),
+                    content_dimensions: PaneDimensions {
+                        width: 30,
+                        height: 1,
+                    },
+                    logical_lines: lines.into_iter().map(str::to_string).collect(),
+                    visible_viewport: None,
+                    capture_mode: PaneTextCaptureMode::ExactVisibleUnwrapped,
+                })
+                .collect(),
+            session: PickerReturnContext {
+                return_tab_id: "t1".to_string(),
+                return_pane_id: PaneId::new("p1"),
+                zoom_picker: false,
+            },
+            action: PickerAction::Copy,
+            custom_patterns: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn tab_view_assigns_unique_hints_and_resolves_other_panes() {
+        let view = build_tab_picker_view(&tab_snapshot(vec![
+            ("p1", vec!["first /tmp/one"]),
+            ("p2", vec!["second /tmp/two"]),
+        ]));
+
+        assert_eq!(view.assignments.len(), 2);
+        assert_eq!(view.assignments.copied_text_for_hint("a"), Some("/tmp/one"));
+        assert_eq!(view.assignments.copied_text_for_hint("s"), Some("/tmp/two"));
+        assert_eq!(view.assignments.for_pane(&PaneId::new("p1")).len(), 1);
+        assert_eq!(view.assignments.for_pane(&PaneId::new("p2")).len(), 1);
+    }
+
+    #[test]
+    fn duplicate_text_shares_a_hint_across_panes() {
+        let view = build_tab_picker_view(&tab_snapshot(vec![
+            ("p1", vec!["/tmp/shared"]),
+            ("p2", vec!["again /tmp/shared"]),
+        ]));
+
+        assert_eq!(view.match_count, 2);
+        assert_eq!(view.assignments.len(), 1);
+        assert_eq!(view.assignments.assignments()[0].occurrences.len(), 2);
+        assert_eq!(view.assignments.for_pane(&PaneId::new("p1")).len(), 1);
+        assert_eq!(view.assignments.for_pane(&PaneId::new("p2")).len(), 1);
+    }
+
+    #[test]
+    fn pane_without_matches_keeps_its_own_content() {
+        let view = build_tab_picker_view(&tab_snapshot(vec![
+            ("p1", vec!["/tmp/match"]),
+            ("p2", vec!["wide 界 text"]),
+            ("p3", Vec::new()),
+        ]));
+
+        assert_eq!(view.panes[1].match_count, 0);
+        assert!(view.panes[1].lines[0].spans[0]
+            .text
+            .contains("wide 界 text"));
+        assert_eq!(view.panes[2].lines.len(), 1);
+        assert_eq!(view.panes[2].lines[0].spans[0].text.chars().count(), 30);
     }
 }
