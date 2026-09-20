@@ -11,7 +11,9 @@ use crate::config::resolve_pattern_specs;
 use crate::herdr::client::SocketHerdrClient;
 use crate::herdr::context::HerdrContext;
 use crate::herdr::executor::{cleanup_session, launch_layout_tab_picker};
-use crate::herdr::snapshot::{read_tab_snapshot_file, wait_for_ready, PickerLaunchFiles};
+use crate::herdr::snapshot::{
+    acknowledge_loaded, read_tab_snapshot_file, wait_for_ready, PickerLaunchFiles,
+};
 use crate::model::{PaneId, PickerAction};
 use anyhow::{Context, Result};
 use crossterm::{cursor, execute, terminal};
@@ -68,10 +70,12 @@ impl HerdrAdapter {
         &self,
         snapshot_path: &Path,
         ready_path: &Path,
+        acknowledgement_path: &Path,
         source_pane: &PaneId,
         coordinator: bool,
     ) -> Result<()> {
         let snapshot = read_tab_snapshot_file(snapshot_path)?;
+        acknowledge_loaded(acknowledgement_path)?;
         wait_for_ready(ready_path, Duration::from_secs(10))?;
         if !coordinator {
             return crate::picker::run_tab_renderer(&snapshot, source_pane);
@@ -84,6 +88,10 @@ impl HerdrAdapter {
         let files = PickerLaunchFiles {
             snapshot_path: snapshot_path.to_path_buf(),
             ready_path: ready_path.to_path_buf(),
+            acknowledgement_dir: acknowledgement_path
+                .parent()
+                .context("worker acknowledgement path has no parent")?
+                .to_path_buf(),
             marker_temp_path: ready_path.with_extension("ready.tmp"),
         };
         let primary = crate::picker::run_tab_picker(&snapshot, source_pane).map(|_| ());

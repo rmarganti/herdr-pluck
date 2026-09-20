@@ -1,13 +1,14 @@
 use crate::herdr::client::HerdrClient;
 use crate::herdr::layout::derive_source_pane_geometries;
-use crate::herdr::snapshot::PickerLaunchFiles;
+use crate::herdr::snapshot::{wait_for_acknowledgements, PickerLaunchFiles};
 use crate::model::{
     PaneDimensions, PaneId, PaneTextCaptureMode, PatternSpec, PickerAction, PickerPaneSnapshot,
     PickerReturnContext, PickerSnapshot, TabPickerSnapshot,
 };
 use crate::viewport::map_visible_viewport;
-use anyhow::{bail, Context, Result};
+use anyhow::{bail, Result};
 use std::path::Path;
+use std::time::Duration;
 
 /// Captures source state and atomically applies the temporary picker layout.
 pub fn launch_layout_tab_picker<C: HerdrClient>(
@@ -65,15 +66,25 @@ pub fn launch_layout_tab_picker<C: HerdrClient>(
         custom_patterns,
     };
     let files = PickerLaunchFiles::create(&snapshot)?;
-    let root = exported.root.replace_commands(&mut |pane| {
+    let mut acknowledgement_paths = Vec::with_capacity(snapshot.panes.len());
+    let root = match exported.root.replace_commands(&mut |pane| {
+        let acknowledgement = files.acknowledgement_path(acknowledgement_paths.len());
+        acknowledgement_paths.push(acknowledgement.clone());
         worker_command(
             pane,
             &coordinator,
             binary_path,
             &files.snapshot_path,
             &files.ready_path,
+            &acknowledgement,
         )
-    })?;
+    }) {
+        Ok(root) => root,
+        Err(error) => {
+            let _ = files.cleanup();
+            return Err(error);
+        }
+    };
     let workspace_id = &exported.workspace_id;
     // `layout.export` has no tab label, so the temporary tab deliberately keeps Pluck branding.
     let tab_label = match action {
@@ -88,13 +99,24 @@ pub fn launch_layout_tab_picker<C: HerdrClient>(
         }
     };
 
-    let coordinator_pane = applied
-        .pane_ids
-        .get(&coordinator)
-        .context("layout.apply did not map the coordinator pane")?;
-    let focus_result = client.focus_pane(coordinator_pane);
+    let coordinator_pane = match applied.pane_ids.get(&coordinator) {
+        Some(pane) => pane,
+        None => {
+            let error = anyhow::anyhow!("layout.apply did not map the coordinator pane");
+            if let Err(cleanup) = cleanup_session(client, &return_context, &applied.tab_id) {
+                eprintln!("launch cleanup also failed: {cleanup:#}");
+            }
+            if let Err(cleanup) = files.cleanup() {
+                eprintln!("launch file cleanup also failed: {cleanup:#}");
+            }
+            return Err(error);
+        }
+    };
+    let startup_result = wait_for_acknowledgements(&acknowledgement_paths, Duration::from_secs(10))
+        .and_then(|_| client.focus_pane(coordinator_pane))
+        .and_then(|_| files.signal_ready());
 
-    if let Err(error) = focus_result.and_then(|_| files.signal_ready()) {
+    if let Err(error) = startup_result {
         if let Err(cleanup) = cleanup_session(client, &return_context, &applied.tab_id) {
             eprintln!("launch cleanup also failed: {cleanup:#}");
         }
@@ -115,6 +137,7 @@ fn worker_command(
     binary: &Path,
     snapshot: &Path,
     ready: &Path,
+    acknowledgement: &Path,
 ) -> Vec<String> {
     vec![
         binary.to_string_lossy().into_owned(),
@@ -128,6 +151,8 @@ fn worker_command(
         snapshot.to_string_lossy().into_owned(),
         "--ready".into(),
         ready.to_string_lossy().into_owned(),
+        "--acknowledge".into(),
+        acknowledgement.to_string_lossy().into_owned(),
         "--source-pane".into(),
         pane.0.clone(),
     ]
@@ -194,6 +219,7 @@ mod tests {
             Path::new("/a b/pluck"),
             Path::new("/tmp/snapshot"),
             Path::new("/tmp/ready"),
+            Path::new("/tmp/ack-1"),
         );
         let render = worker_command(
             &PaneId::new("p2"),
@@ -201,6 +227,7 @@ mod tests {
             Path::new("/a b/pluck"),
             Path::new("/tmp/snapshot"),
             Path::new("/tmp/ready"),
+            Path::new("/tmp/ack-2"),
         );
         assert_eq!(coordinate[1], "coordinate");
         assert_eq!(render[1], "render");

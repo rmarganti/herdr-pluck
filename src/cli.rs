@@ -39,6 +39,8 @@ pub enum Command {
         #[arg(long)]
         ready: PathBuf,
         #[arg(long)]
+        acknowledge: PathBuf,
+        #[arg(long)]
         source_pane: String,
     },
 
@@ -49,6 +51,8 @@ pub enum Command {
         snapshot: PathBuf,
         #[arg(long)]
         ready: PathBuf,
+        #[arg(long)]
+        acknowledge: PathBuf,
         #[arg(long)]
         source_pane: String,
     },
@@ -73,16 +77,30 @@ pub fn run_with(cli: Cli) -> Result<()> {
         Command::Coordinate {
             snapshot,
             ready,
+            acknowledge,
             source_pane,
         } => {
-            adapter.run_tab_worker(&snapshot, &ready, &PaneId::new(source_pane), true)?;
+            adapter.run_tab_worker(
+                &snapshot,
+                &ready,
+                &acknowledge,
+                &PaneId::new(source_pane),
+                true,
+            )?;
         }
         Command::Render {
             snapshot,
             ready,
+            acknowledge,
             source_pane,
         } => {
-            adapter.run_tab_worker(&snapshot, &ready, &PaneId::new(source_pane), false)?;
+            adapter.run_tab_worker(
+                &snapshot,
+                &ready,
+                &acknowledge,
+                &PaneId::new(source_pane),
+                false,
+            )?;
         }
     }
 
