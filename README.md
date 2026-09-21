@@ -8,7 +8,7 @@ Invoke an action while a pane is focused and type the displayed hint for the ite
 
 ## Requirements
 
-- Herdr 0.7.4 or newer
+- Herdr 0.7.0 or newer (the first release with the required `layout.export` and `layout.apply` APIs)
 - For release installs, a download tool:
     - `curl` or `wget`
 - Rust/Cargo only when forcing a source build or when no matching prebuilt binary is available
@@ -96,11 +96,13 @@ herdr server reload-config
 
 ## Usage
 
-1. Focus a Herdr pane containing a URL, path, commit SHA, UUID, IP address, long numeric identifier, hex literal, Kubernetes reference, Git status path, branch, or diff path.
+1. Focus a Herdr tab containing a URL, path, commit SHA, UUID, IP address, long numeric identifier, hex literal, Kubernetes reference, Git status path, branch, or diff path.
 2. Invoke `rmarganti.herdr-pluck.pluck` through your keybinding or Herdr's plugin action command.
-3. Herdr Pluck opens a temporary picker tab that mirrors the source layout and shows hints over copyable text in the target pane.
-4. Type the shown one- or two-letter hint to copy that token and close the picker.
+3. Herdr Pluck captures each visible pane sequentially, then opens one temporary tab with the same BSP layout and pane chrome. The capture is frozen; output produced after a pane is captured is not added.
+4. Type the shown globally unique one- or two-letter hint to select a token from any visible pane and close the picker.
 5. Press Escape or Ctrl-C to cancel without copying.
+
+If the source tab is zoomed, Pluck captures only the visible focused pane, recreates the full hidden layout, and zooms the corresponding picker pane. Hidden panes do not contribute hints. Pane borders, outer borders, and gaps are rendered by Herdr from the exported layout rather than approximated by Pluck.
 
 The `open-url` action uses the same picker flow, but shows only `http://`, `https://`, and `file://` URLs and opens the selected URL through the system default handler without changing the clipboard.
 
@@ -172,6 +174,8 @@ When identical text appears more than once, every visible occurrence shows the s
 Tag releases as `vX.Y.Z`. GitHub Actions validates the crate, builds release archives, and uploads platform binaries to the matching GitHub Release.
 
 ## Troubleshooting
+
+Herdr versions older than 0.7.0 do not provide the layout APIs used by Pluck. Upgrade Herdr if the action reports that `layout.export` or `layout.apply` is unavailable or incompatible.
 
 If invoking the action does nothing useful, check that the plugin is linked and the installed binary exists:
 

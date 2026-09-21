@@ -1,6 +1,7 @@
 pub mod client;
 pub mod context;
 pub mod executor;
+pub mod exported_layout;
 pub mod layout;
 mod protocol;
 pub mod snapshot;
@@ -9,16 +10,16 @@ mod socket;
 use crate::config::resolve_pattern_specs;
 use crate::herdr::client::SocketHerdrClient;
 use crate::herdr::context::HerdrContext;
-use crate::herdr::executor::{
-    cleanup_session, launch_layout_tab_picker, run_snapshot_picker, zoom_picker,
+use crate::herdr::executor::{cleanup_session, launch_layout_tab_picker};
+use crate::herdr::snapshot::{
+    acknowledge_loaded, read_tab_snapshot_file, wait_for_ready, PickerLaunchFiles,
 };
-use crate::herdr::snapshot::{read_snapshot_file, wait_for_ready, PickerLaunchFiles};
 use crate::model::{PaneId, PickerAction};
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result};
 use crossterm::{cursor, execute, terminal};
 use std::io::{stdout, Write};
 use std::path::Path;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 pub use layout::derive_layout_recreation_plan;
 
@@ -64,82 +65,40 @@ impl HerdrAdapter {
         Ok(())
     }
 
-    /// Waits for layout completion, runs the picker, and always cleans up explicit resources.
-    pub fn run_picker_from_snapshot(&self, snapshot_path: &Path, ready_path: &Path) -> Result<()> {
-        let snapshot = read_snapshot_file(snapshot_path)?;
+    /// Runs one tab worker; only the coordinator owns input and cleanup.
+    pub fn run_tab_worker(
+        &self,
+        snapshot_path: &Path,
+        ready_path: &Path,
+        acknowledgement_path: &Path,
+        source_pane: &PaneId,
+        coordinator: bool,
+    ) -> Result<()> {
+        let snapshot = read_tab_snapshot_file(snapshot_path)?;
+        acknowledge_loaded(acknowledgement_path)?;
+        wait_for_ready(ready_path, Duration::from_secs(10))?;
+        if !coordinator {
+            return crate::picker::run_tab_renderer(&snapshot, source_pane);
+        }
         let temp_tab = self
             .context
             .tab_id
             .clone()
             .context("picker process is missing HERDR_TAB_ID")?;
-        let pane = self
-            .context
-            .pane_id
-            .clone()
-            .map(PaneId::new)
-            .context("picker process is missing HERDR_PANE_ID")?;
         let files = PickerLaunchFiles {
             snapshot_path: snapshot_path.to_path_buf(),
             ready_path: ready_path.to_path_buf(),
+            acknowledgement_dir: acknowledgement_path
+                .parent()
+                .context("worker acknowledgement path has no parent")?
+                .to_path_buf(),
             marker_temp_path: ready_path.with_extension("ready.tmp"),
         };
+        let primary = crate::picker::run_tab_picker(&snapshot, source_pane).map(|_| ());
         let mut client = SocketHerdrClient::from_context(&self.context)?;
-        let primary = wait_for_ready(ready_path, Duration::from_secs(10))
-            .and_then(|_| zoom_picker(&mut client, &snapshot, &pane))
-            .and_then(|_| {
-                if snapshot.session.zoom_picker {
-                    wait_for_terminal_size(
-                        snapshot.source.target_content_width,
-                        snapshot.source.target_content_height,
-                        Duration::from_secs(2),
-                    )
-                } else {
-                    Ok(())
-                }
-            })
-            .and_then(|_| run_snapshot_picker(&snapshot));
         let cleanup = cleanup_session(&mut client, &snapshot.session, &temp_tab);
         let files_cleanup = files.cleanup();
-        match primary {
-            Err(e) => {
-                if let Err(c) = cleanup {
-                    eprintln!("cleanup also failed: {c:#}");
-                }
-                if let Err(c) = files_cleanup {
-                    eprintln!("file cleanup also failed: {c:#}");
-                }
-                Err(e)
-            }
-            Ok(()) => {
-                cleanup?;
-                files_cleanup?;
-                Ok(())
-            }
-        }
-    }
-}
-
-/**
- * Waits for Herdr to propagate an asynchronous pane resize to the picker PTY.
- */
-fn wait_for_terminal_size(width: u16, height: u16, timeout: Duration) -> Result<()> {
-    let started = Instant::now();
-
-    loop {
-        let (current_width, current_height) =
-            terminal::size().context("failed to read picker terminal size")?;
-
-        if (current_width, current_height) == (width, height) {
-            return Ok(());
-        }
-
-        if started.elapsed() >= timeout {
-            bail!(
-                "timed out waiting for picker terminal resize to {width}x{height}; current size is {current_width}x{current_height}"
-            );
-        }
-
-        std::thread::sleep(Duration::from_millis(10));
+        primary.and(cleanup).and(files_cleanup)
     }
 }
 

@@ -31,19 +31,31 @@ pub enum Command {
         target_pane: Option<String>,
     },
 
-    /// Picker entrypoint: run inside the temporary layout-tab target pane.
-    Pick {
-        /// Temp JSON snapshot path produced by `open`.
+    /// Internal input-owning worker for the source-focused leaf.
+    #[command(hide = true)]
+    Coordinate {
         #[arg(long)]
         snapshot: PathBuf,
-        /// One-shot launch barrier released after layout application.
         #[arg(long)]
         ready: PathBuf,
+        #[arg(long)]
+        acknowledge: PathBuf,
+        #[arg(long)]
+        source_pane: String,
     },
 
-    /// Internal shell-free placeholder for non-picker panes.
+    /// Internal readonly worker for every other mirrored leaf.
     #[command(hide = true)]
-    Idle,
+    Render {
+        #[arg(long)]
+        snapshot: PathBuf,
+        #[arg(long)]
+        ready: PathBuf,
+        #[arg(long)]
+        acknowledge: PathBuf,
+        #[arg(long)]
+        source_pane: String,
+    },
 }
 
 pub fn run() -> Result<()> {
@@ -62,10 +74,34 @@ pub fn run_with(cli: Cli) -> Result<()> {
             let target = resolve_target(&adapter, target_pane)?;
             adapter.open_url_picker(&target)?;
         }
-        Command::Pick { snapshot, ready } => {
-            adapter.run_picker_from_snapshot(&snapshot, &ready)?;
+        Command::Coordinate {
+            snapshot,
+            ready,
+            acknowledge,
+            source_pane,
+        } => {
+            adapter.run_tab_worker(
+                &snapshot,
+                &ready,
+                &acknowledge,
+                &PaneId::new(source_pane),
+                true,
+            )?;
         }
-        Command::Idle => crate::herdr::run_idle()?,
+        Command::Render {
+            snapshot,
+            ready,
+            acknowledge,
+            source_pane,
+        } => {
+            adapter.run_tab_worker(
+                &snapshot,
+                &ready,
+                &acknowledge,
+                &PaneId::new(source_pane),
+                false,
+            )?;
+        }
     }
 
     Ok(())

@@ -1,10 +1,12 @@
 use crate::herdr::context::HerdrContext;
+use crate::herdr::exported_layout::ExportedLayout;
 use crate::herdr::layout::LayoutSnapshot;
 use crate::herdr::protocol;
 use crate::herdr::socket::UnixSocketTransport;
 use crate::model::PaneId;
 use anyhow::{Context, Result};
 use serde::Serialize;
+use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 static REQUEST_COUNTER: AtomicU64 = AtomicU64::new(0);
@@ -16,6 +18,10 @@ static REQUEST_COUNTER: AtomicU64 = AtomicU64::new(0);
 pub enum LaunchLayoutNode {
     Pane {
         command: Vec<String>,
+        source_pane_id: Option<PaneId>,
+        label: Option<String>,
+        cwd: Option<String>,
+        env: HashMap<String, String>,
     },
     Split {
         direction: crate::model::SplitDirection,
@@ -32,6 +38,8 @@ pub enum LaunchLayoutNode {
 pub struct AppliedLayout {
     pub tab_id: String,
     pub picker_pane_id: PaneId,
+    /// Temporary pane identity keyed by its corresponding source pane.
+    pub pane_ids: HashMap<PaneId, PaneId>,
 }
 
 /**
@@ -39,6 +47,9 @@ pub struct AppliedLayout {
  */
 pub trait HerdrClient {
     fn pane_layout(&mut self, pane: &PaneId) -> Result<LayoutSnapshot>;
+    fn export_layout(&mut self, _pane: &PaneId) -> Result<ExportedLayout> {
+        anyhow::bail!("layout.export is not implemented by this Herdr client")
+    }
     fn pane_read_visible(&mut self, pane: &PaneId, lines: u16) -> Result<String>;
     fn apply_layout(
         &mut self,
@@ -65,7 +76,7 @@ impl SocketHerdrClient {
         let path = context
             .socket_path
             .clone()
-            .context("HERDR_SOCKET_PATH is missing; Herdr Pluck requires Herdr 0.7.4 or newer")?;
+            .context("HERDR_SOCKET_PATH is missing; Herdr Pluck requires Herdr 0.7.0 or newer")?;
         Ok(Self {
             transport: UnixSocketTransport::new(path),
         })
@@ -90,6 +101,13 @@ impl HerdrClient for SocketHerdrClient {
         protocol::pane_layout(value, &id)
     }
 
+    fn export_layout(&mut self, pane: &PaneId) -> Result<ExportedLayout> {
+        let (id, value) = self.call("layout.export", protocol::pane_target(&pane.0))?;
+        protocol::exported_layout(value, &id).with_context(|| {
+            "Herdr layout.export is unavailable or incompatible; Herdr Pluck requires Herdr 0.7.0 or newer"
+        })
+    }
+
     fn pane_read_visible(&mut self, pane: &PaneId, lines: u16) -> Result<String> {
         let (id, value) = self.call("pane.read", protocol::pane_read_params(&pane.0, lines))?;
         protocol::pane_read(value, &id)
@@ -105,10 +123,8 @@ impl HerdrClient for SocketHerdrClient {
             "layout.apply",
             protocol::layout_apply_params(workspace_id, tab_label, root),
         )?;
-        let (tab_id, picker_pane_id) = protocol::applied_layout(value, &id, root)?;
-        Ok(AppliedLayout {
-            tab_id,
-            picker_pane_id: PaneId::new(picker_pane_id),
+        protocol::applied_layout(value, &id, root).with_context(|| {
+            "Herdr layout.apply is unavailable or incompatible; Herdr Pluck requires Herdr 0.7.0 or newer"
         })
     }
 
