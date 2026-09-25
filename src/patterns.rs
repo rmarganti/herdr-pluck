@@ -13,7 +13,8 @@ struct PatternDefinition {
     /// ie. `1` is the number one priority, while `5` is a lower priority
     priority: u16,
     regex: Regex,
-    trim_url_end: bool,
+    /// Strips sentence punctuation and unbalanced closing brackets from the match end.
+    trim_trailing_punctuation: bool,
 }
 
 impl PatternDefinition {
@@ -31,13 +32,13 @@ impl PatternDefinition {
             name: name.into(),
             priority,
             regex: Regex::new(pattern)?,
-            trim_url_end: false,
+            trim_trailing_punctuation: false,
         })
     }
 
-    fn compile_url(pattern: &str) -> Self {
-        let mut definition = Self::compile("url", 10, pattern);
-        definition.trim_url_end = true;
+    fn compile_trimmed(name: impl Into<String>, priority: u16, pattern: &str) -> Self {
+        let mut definition = Self::compile(name, priority, pattern);
+        definition.trim_trailing_punctuation = true;
         definition
     }
 }
@@ -102,7 +103,9 @@ pub fn find_openable_urls(lines: &[String]) -> Vec<MatchSpan> {
 fn built_in_patterns() -> &'static [PatternDefinition] {
     BUILT_IN_PATTERNS.get_or_init(|| {
         vec![
-            PatternDefinition::compile_url(
+            PatternDefinition::compile_trimmed(
+                "url",
+                10,
                 r#"(((?i:https?://|git@|git://|ssh://|ftp://|file://))[^\s()"']+)"#,
             ),
             PatternDefinition::compile("git-status", 15, r#"(modified|deleted|deleted by us|new file): +(?<match>.+)"#),
@@ -117,7 +120,7 @@ fn built_in_patterns() -> &'static [PatternDefinition] {
                 18,
                 &format!(r#"\b({KUBERNETES_RESOURCE_KINDS})([/_#$%&+=@-][[:alnum:]_#$%&+=/@-]*)?\b"#),
             ),
-            PatternDefinition::compile("path", 20, r#"(([.\w\-~\$@]+)?(/[.\w\-@]+)+/?)"#),
+            PatternDefinition::compile_trimmed("path", 20, r#"(([.\w\-~\$@]+)?(/[.\w\-@]+)+/?)"#),
             PatternDefinition::compile(
                 "uuid",
                 30,
@@ -159,8 +162,8 @@ fn collect_candidates(lines: &[String], patterns: &[&PatternDefinition]) -> Vec<
                     continue;
                 };
 
-                let (end, text) = if pattern.trim_url_end {
-                    trim_url_end(line, regex_match.start(), regex_match.end())
+                let (end, text) = if pattern.trim_trailing_punctuation {
+                    trim_trailing_punctuation(line, regex_match.start(), regex_match.end())
                 } else {
                     (regex_match.end(), regex_match.as_str().to_string())
                 };
@@ -186,7 +189,7 @@ fn collect_candidates(lines: &[String], patterns: &[&PatternDefinition]) -> Vec<
     candidates
 }
 
-fn trim_url_end(line: &str, start: usize, mut end: usize) -> (usize, String) {
+fn trim_trailing_punctuation(line: &str, start: usize, mut end: usize) -> (usize, String) {
     while end > start {
         let text = &line[start..end];
         let Some(last) = text.chars().last() else {
@@ -313,6 +316,20 @@ mod tests {
             urls,
             vec!["https://example.com/path", "https://example.com/what"]
         );
+    }
+
+    #[test]
+    fn path_trims_sentence_punctuation() {
+        let matches = find_matches_with_defaults_only(&lines([
+            "saved to ~/Desktop/notes.md. Also src/main.rs, and dir/sub/!",
+        ]));
+        let paths = matches
+            .iter()
+            .filter(|span| span.pattern == "path")
+            .map(|span| span.text.as_str())
+            .collect::<Vec<_>>();
+
+        assert_eq!(paths, vec!["~/Desktop/notes.md", "src/main.rs", "dir/sub/"]);
     }
 
     #[test]
