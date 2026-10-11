@@ -179,6 +179,27 @@ pub struct PickerSnapshot {
     pub custom_patterns: Vec<PatternSpec>,
 }
 
+/// One pane's immutable text and content dimensions within a tab-wide capture.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PickerPaneSnapshot {
+    pub source_pane_id: PaneId,
+    pub content_dimensions: PaneDimensions,
+    pub logical_lines: Vec<String>,
+    pub visible_viewport: Option<VisibleViewport>,
+    pub capture_mode: PaneTextCaptureMode,
+}
+
+/// Immutable captures used to assign and resolve hints across an entire source tab.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TabPickerSnapshot {
+    pub panes: Vec<PickerPaneSnapshot>,
+    pub session: PickerReturnContext,
+    #[serde(default)]
+    pub action: PickerAction,
+    #[serde(default)]
+    pub custom_patterns: Vec<PatternSpec>,
+}
+
 /// Direction of a Herdr binary pane split as exposed by layout snapshots and replay commands.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -252,6 +273,21 @@ pub struct HintAssignment {
     pub hint: String,
     pub text: String,
     pub occurrences: Vec<MatchSpan>,
+}
+
+/// A match occurrence qualified by its source pane.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PaneMatchSpan {
+    pub source_pane_id: PaneId,
+    pub span: MatchSpan,
+}
+
+/// One globally unique hint and its occurrences throughout the source tab.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TabHintAssignment {
+    pub hint: String,
+    pub text: String,
+    pub occurrences: Vec<PaneMatchSpan>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
