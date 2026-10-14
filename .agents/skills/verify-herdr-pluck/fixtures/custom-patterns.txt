@@ -1,0 +1,6 @@
+ticket   PLK-42 shipped
+trace    trace_id=abc123 ok
+global   GLB-7 queued
+prec     prec=alpha
+build    build-1a2b3c4
+end-of-fixture

@@ -10,4 +10,4 @@
 - `cargo fmt --all -- --check`
 - `cargo test --all-features`
 - `cargo clippy --all-targets --all`
-- Any live, end-to-end testing can be done with the `herdr` CLI and `/herdr` agent skill.
+- For user-facing changes (picker, patterns, hints, layout, config, clipboard, URL opening), run the `verify-herdr-pluck` skill (`.agents/skills/verify-herdr-pluck/SKILL.md`, symlinked into `.claude/skills/`). It drives the real plugin actions in a private Herdr and captures evidence. Keep its `features/` map current when user-facing behavior changes.

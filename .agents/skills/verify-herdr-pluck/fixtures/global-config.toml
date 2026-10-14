@@ -1,0 +1,17 @@
+# Global plugin config installed into the private Herdr home's plugin config dir.
+[[patterns]]
+name = "global-ticket"
+regex = "\\bGLB-[0-9]+\\b"
+priority = 25
+
+# Loses to `project-prec` (same priority, project-local wins).
+[[patterns]]
+name = "global-prec"
+regex = "prec=[a-z]+"
+priority = 25
+
+# Beats the built-in git-sha (priority 40) on the overlapping hex run.
+[[patterns]]
+name = "build-id"
+regex = "build-[0-9a-f]{7}"
+priority = 25

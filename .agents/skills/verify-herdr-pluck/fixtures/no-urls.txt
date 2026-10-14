@@ -1,0 +1,3 @@
+path     src/picker/session.rs
+sha      1a63023f
+end-of-fixture

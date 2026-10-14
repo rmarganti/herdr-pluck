@@ -1,0 +1,12 @@
+url      https://example.com/docs/getting-started
+file     file:///tmp/herdr-pluck/report.html
+path     src/picker/session.rs
+sha      1a63023f
+uuid     123e4567-e89b-12d3-a456-426614174000
+ip       192.168.40.12
+hex      0xdeadBEEF
+k8s      deployment.apps/frontend
+number   9876543210123
+dup      src/picker/session.rs
+trailing see https://example.com/trailing.
+end-of-fixture

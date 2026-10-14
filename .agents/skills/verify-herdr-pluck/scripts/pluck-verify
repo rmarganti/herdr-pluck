@@ -1,0 +1,388 @@
+#!/usr/bin/env bash
+# Drives Herdr Pluck end to end inside a private, throwaway Herdr home.
+#
+# Isolation model:
+#   - Each run gets its own XDG_CONFIG_HOME, so Herdr's plugin registry, plugin
+#     config dir, sockets, and sessions are all private to the run. The user's
+#     real server, keybindings, and global Pluck patterns are never read.
+#   - Inherited HERDR_* variables are dropped, so an agent running inside a
+#     Herdr pane cannot accidentally talk to the user's server.
+#   - Clipboard and URL-launcher commands are PATH shims on the private server.
+#     They record exactly what the plugin handed them and never reach the real
+#     clipboard or browser.
+#
+# Run state and evidence live in target/verify-herdr-pluck/<run-id>/, and
+# `current` points at the active run so each subcommand can be a separate shell.
+set -euo pipefail
+
+for var in $(compgen -e | grep '^HERDR_' || true); do unset "$var"; done
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SKILL_DIR="$(dirname "$SCRIPT_DIR")"
+REPO_ROOT="$(git -C "$SKILL_DIR" rev-parse --show-toplevel)"
+RUNS_DIR="$REPO_ROOT/target/verify-herdr-pluck"
+PLUGIN_ID="rmarganti.herdr-pluck"
+PICKER_TAB_PREFIX="Herdr Pluck"
+
+die() { printf 'pluck-verify: %s\n' "$*" >&2; exit 1; }
+log() { printf '%s\n' "$*" >&2; }
+
+usage() {
+    cat <<'EOF'
+usage: pluck-verify <command> [args]
+
+  up [--no-build]          build bin/herdr-pluck, start a private Herdr, link this checkout
+  doctor                   read-only health check of the current run
+  seed <fixture> [pane]    clear the source pane (or <pane>) and print a fixture file
+  split <fixture>          split the source pane right, seed it, make it the source
+  invoke <pluck|open-url>  invoke the action on the source pane; prints the hinted picker
+  screen <name> [pane]     save the picker (or <pane>) screen to evidence/<name>.txt
+  select <keys...>         type hint keys into the picker, wait for it to close,
+                           and record the clipboard/opened-URL side effects
+  side-effects             print the current drive's clipboard and opened-URL captures
+  panes                    list panes as "<pane> <tab> <tab label> [focused]"
+  down                     stop the private Herdr and delete its home; keeps evidence
+EOF
+}
+
+run_dir() {
+    [ -L "$RUNS_DIR/current" ] || die "no active run; run 'pluck-verify up' first"
+    readlink "$RUNS_DIR/current"
+}
+
+load_state() {
+    RUN_DIR="$(run_dir)"
+    # shellcheck disable=SC1091
+    . "$RUN_DIR/state.env"
+}
+
+set_state() {
+    local key="$1" value="$2" file="$RUN_DIR/state.env"
+    grep -v "^$key=" "$file" > "$file.tmp" || true
+    printf '%s=%q\n' "$key" "$value" >> "$file.tmp"
+    mv "$file.tmp" "$file"
+}
+
+# Every Herdr call goes to the run's private home, never the user's.
+h() { XDG_CONFIG_HOME="$HERDR_HOME" herdr "$@"; }
+
+nap() { sleep "${1:-0.1}"; }
+
+# Resolves a fixture by path, or by name relative to the skill's fixtures/.
+fixture_path() {
+    local name="$1"
+    if [ -f "$name" ]; then
+        (cd "$(dirname "$name")" && printf '%s/%s\n' "$PWD" "$(basename "$name")")
+    elif [ -f "$SKILL_DIR/fixtures/$name" ]; then
+        printf '%s\n' "$SKILL_DIR/fixtures/$name"
+    else
+        die "fixture not found: $name"
+    fi
+}
+
+picker_tab() {
+    h tab list --workspace "$WORKSPACE" \
+        | jq -r --arg p "$PICKER_TAB_PREFIX" '.result.tabs[] | select(.label | startswith($p)) | .tab_id' \
+        | head -n1
+}
+
+focused_pane() {
+    h pane list --workspace "$WORKSPACE" | jq -r '.result.panes[] | select(.focused) | .pane_id'
+}
+
+write_shims() {
+    local shims="$RUN_DIR/shims" capture="$RUN_DIR/capture" name
+    cat > "$shims/pbcopy" <<EOF
+#!/bin/sh
+cat > "$capture/clipboard"
+EOF
+    for name in wl-copy xclip xsel; do cp "$shims/pbcopy" "$shims/$name"; done
+    cat > "$shims/open" <<EOF
+#!/bin/sh
+printf '%s\n' "\$@" >> "$capture/opened-urls"
+EOF
+    cp "$shims/open" "$shims/xdg-open"
+    chmod +x "$shims/"*
+}
+
+cmd_up() {
+    local build=1
+    [ "${1:-}" = "--no-build" ] && build=0
+    command -v herdr >/dev/null || die "herdr is not on PATH"
+    command -v jq >/dev/null || die "jq is not on PATH"
+    if [ -L "$RUNS_DIR/current" ]; then
+        die "run $(readlink "$RUNS_DIR/current") is still active; 'pluck-verify down' first"
+    fi
+
+    if [ "$build" = 1 ]; then
+        log "building bin/herdr-pluck from $REPO_ROOT"
+        (cd "$REPO_ROOT" && HERDR_PLUCK_BUILD_FROM_SOURCE=1 ./scripts/install-binary.sh)
+    fi
+
+    RUN_DIR="$RUNS_DIR/$(date +%Y%m%d-%H%M%S)-$$"
+    mkdir -p "$RUN_DIR/evidence" "$RUN_DIR/capture" "$RUN_DIR/shims" \
+        "$RUN_DIR/fixture/.git" "$RUN_DIR/fixture/project"
+    cp "$SKILL_DIR/fixtures/project-config.toml" "$RUN_DIR/fixture/.herdr-pluck.toml"
+    write_shims
+
+    # Unix socket paths are length-limited, so the Herdr home stays short and in /tmp.
+    HERDR_HOME="$(mktemp -d /tmp/hp.XXXXXX)"
+    : > "$RUN_DIR/state.env"
+    set_state HERDR_HOME "$HERDR_HOME"
+    ln -sfn "$RUN_DIR" "$RUNS_DIR/current"
+
+    PATH="$RUN_DIR/shims:$PATH" XDG_CONFIG_HOME="$HERDR_HOME" \
+        nohup herdr server > "$RUN_DIR/server.out" 2>&1 &
+    set_state SERVER_PID "$!"
+
+    local i
+    for i in $(seq 1 100); do
+        h workspace list >/dev/null 2>&1 && break
+        nap
+    done
+    h workspace list >/dev/null 2>&1 || die "private Herdr never answered; see $RUN_DIR/server.out"
+
+    HERDR_PLUCK_BUILD_FROM_SOURCE=1 h plugin link "$REPO_ROOT" > "$RUN_DIR/evidence/plugin-link.json"
+    local config_dir
+    config_dir="$(h plugin config-dir "$PLUGIN_ID")"
+    mkdir -p "$config_dir"
+    cp "$SKILL_DIR/fixtures/global-config.toml" "$config_dir/config.toml"
+
+    local created
+    created="$(h workspace create --cwd "$RUN_DIR/fixture/project" --label verify --focus)"
+    set_state WORKSPACE "$(jq -r '.result.workspace.workspace_id' <<<"$created")"
+    set_state SOURCE_PANE "$(jq -r '.result.root_pane.pane_id' <<<"$created")"
+
+    log "run dir:     $RUN_DIR"
+    log "herdr home:  $HERDR_HOME"
+    cmd_doctor
+}
+
+cmd_doctor() {
+    load_state
+    local failed=0
+    check() {
+        local label="$1"
+        shift
+        if "$@"; then printf 'ok    %s\n' "$label"; else printf 'FAIL  %s\n' "$label"; failed=1; fi
+    }
+
+    printf 'run   %s\n' "$RUN_DIR"
+    printf 'home  %s\n' "$HERDR_HOME"
+    printf 'herdr %s\n' "$(herdr --version)"
+    check "private server pid $SERVER_PID alive" kill -0 "$SERVER_PID"
+
+    local socket
+    socket="$(h session list --json 2>/dev/null \
+        | jq -r '.sessions[] | select(.default and .running) | .socket_path')"
+    check "private session running at ${socket:-nothing}" \
+        test "${socket#"$HERDR_HOME"/}" != "$socket"
+
+    local env_dump
+    if [ -r "/proc/$SERVER_PID/environ" ]; then
+        env_dump="$(tr '\0' '\n' < "/proc/$SERVER_PID/environ")"
+    else
+        env_dump="$(ps -E -ww -o command= -p "$SERVER_PID" 2>/dev/null || true)"
+    fi
+    check "server PATH starts with clipboard/open shims" grep -q "PATH=$RUN_DIR/shims:" <<<"$env_dump"
+
+    local plugins ids root
+    plugins="$(h plugin list --json 2>/dev/null || true)"
+    ids="$(jq -r '[.result.plugins[] | select(.enabled) | .plugin_id] | join(",")' <<<"$plugins")"
+    root="$(jq -r --arg id "$PLUGIN_ID" '.result.plugins[] | select(.plugin_id == $id) | .plugin_root' <<<"$plugins")"
+    check "only $PLUGIN_ID is linked (got ${ids:-none})" test "$ids" = "$PLUGIN_ID"
+    check "plugin root is this checkout ($REPO_ROOT)" test "$root" = "$REPO_ROOT"
+
+    local config_dir
+    config_dir="$(h plugin config-dir "$PLUGIN_ID" 2>/dev/null || true)"
+    check "global plugin config is the private fixture" \
+        cmp -s "$config_dir/config.toml" "$SKILL_DIR/fixtures/global-config.toml"
+
+    local version reported
+    version="$(awk -F'"' '/^version = "/ { print $2; exit }' "$REPO_ROOT/herdr-plugin.toml")"
+    reported="$("$REPO_ROOT/bin/herdr-pluck" --version 2>/dev/null || true)"
+    check "bin/herdr-pluck reports version $version" test "$reported" = "herdr-pluck $version"
+    check "bin/herdr-pluck matches target/release build" \
+        cmp -s "$REPO_ROOT/bin/herdr-pluck" "$REPO_ROOT/target/release/herdr-pluck"
+
+    check "source pane $SOURCE_PANE is focused" test "$(focused_pane 2>/dev/null)" = "$SOURCE_PANE"
+    check "no picker tab left open" test -z "$(picker_tab 2>/dev/null || true)"
+
+    [ "$failed" = 0 ] || die "doctor found problems; do not drive this run"
+}
+
+seed_pane() {
+    local pane="$1" fixture="$2"
+    h pane run "$pane" "clear && cat '$fixture'" >/dev/null
+    # The sentinel only exists in the fixture body, never in the typed command,
+    # so a match proves the output (not just the echoed command) is on screen.
+    h pane wait-output "$pane" --match "end-of-fixture" --source visible --timeout 5000 >/dev/null \
+        || die "fixture never rendered in $pane"
+}
+
+cmd_seed() {
+    load_state
+    local fixture pane
+    fixture="$(fixture_path "${1:?fixture required}")"
+    pane="${2:-$SOURCE_PANE}"
+    seed_pane "$pane" "$fixture"
+    h pane read "$pane" --source visible
+}
+
+cmd_split() {
+    load_state
+    local fixture created pane
+    fixture="$(fixture_path "${1:?fixture required}")"
+    created="$(h pane split "$SOURCE_PANE" --direction right --cwd "$RUN_DIR/fixture/project" --focus)"
+    pane="$(jq -r '.result.pane.pane_id' <<<"$created")"
+    set_state SOURCE_PANE "$pane"
+    seed_pane "$pane" "$fixture"
+    printf '%s\n' "$pane"
+}
+
+# Each invoke starts a numbered drive; its evidence files share the NN-<action> prefix.
+cmd_invoke() {
+    load_state
+    local action="${1:?pluck or open-url required}"
+    [ -z "$(picker_tab)" ] || die "a picker is already open; 'select esc' or 'down' first"
+    local seq drive
+    seq=$(( ${DRIVE_SEQ:-0} + 1 ))
+    drive="$(printf '%02d-%s' "$seq" "$action")"
+    set_state DRIVE_SEQ "$seq"
+    set_state DRIVE "$drive"
+    rm -f "$RUN_DIR/capture/"*
+
+    # Actions target the focused pane, exactly like a keybinding.
+    local ev="$RUN_DIR/evidence/$drive" target
+    h plugin action invoke "$PLUGIN_ID.$action" > "$ev.invoke.json"
+    target="$(jq -r '.result.context.focused_pane_id // ""' "$ev.invoke.json")"
+    [ "$target" = "$SOURCE_PANE" ] \
+        || die "action targeted '${target:-nothing}', expected source pane $SOURCE_PANE"
+
+    local tab="" pane="" i previous="" screen
+    for i in $(seq 1 50); do
+        tab="$(picker_tab)"
+        [ -n "$tab" ] && break
+        nap
+    done
+    if [ -z "$tab" ]; then
+        h plugin log list --plugin "$PLUGIN_ID" --limit 5 > "$ev.plugin-log.json" 2>&1 || true
+        die "picker tab never opened; see $ev.plugin-log.json"
+    fi
+    pane="$(h pane list --workspace "$WORKSPACE" \
+        | jq -r --arg t "$tab" '.result.panes[] | select(.tab_id == $t and .focused) | .pane_id')"
+    [ -n "$pane" ] || die "picker tab $tab has no focused pane"
+
+    # The picker waits for its layout and resize before painting hints; wait for
+    # a non-blank screen that is stable across two reads.
+    for i in $(seq 1 50); do
+        screen="$(h pane read "$pane" --source visible)"
+        if [ -n "$(tr -d '[:space:]' <<<"$screen")" ] && [ "$screen" = "$previous" ]; then
+            break
+        fi
+        previous="$screen"
+        nap
+    done
+
+    set_state PICKER_PANE "$pane"
+    printf 'drive: %s\npicker: %s (tab %s)\n' "$drive" "$pane" "$tab"
+    cmd_screen "$drive.picker" "$pane"
+}
+
+cmd_screen() {
+    load_state
+    local name="${1:?name required}" pane="${2:-${PICKER_PANE:-}}"
+    [ -n "$pane" ] || die "no picker pane recorded; pass a pane id"
+    h pane read "$pane" --source visible > "$RUN_DIR/evidence/$name.txt"
+    h pane read "$pane" --source visible --format ansi > "$RUN_DIR/evidence/$name.ansi"
+    cat "$RUN_DIR/evidence/$name.txt"
+}
+
+cmd_select() {
+    load_state
+    [ "$#" -gt 0 ] || die "keys required (e.g. 's' or 'esc')"
+    [ -n "${PICKER_PANE:-}" ] || die "no picker open; run 'pluck-verify invoke' first"
+    local ev="$RUN_DIR/evidence/$DRIVE"
+    printf '%s\n' "$*" > "$ev.keys.txt"
+    h pane send-keys "$PICKER_PANE" "$@" >/dev/null
+
+    local i
+    for i in $(seq 1 50); do
+        [ -z "$(picker_tab)" ] && break
+        nap
+    done
+    [ -z "$(picker_tab)" ] || die "picker still open after keys '$*'; send more keys or 'select esc'"
+    set_state PICKER_PANE ""
+    # The picker waits on the clipboard/open command; give the shim's write a beat anyway.
+    nap 0.2
+
+    if [ -f "$RUN_DIR/capture/clipboard" ]; then cp "$RUN_DIR/capture/clipboard" "$ev.clipboard"; fi
+    if [ -f "$RUN_DIR/capture/opened-urls" ]; then cp "$RUN_DIR/capture/opened-urls" "$ev.opened-urls"; fi
+    cmd_side_effects | tee "$ev.result.txt"
+}
+
+cmd_side_effects() {
+    load_state
+    local clip="$RUN_DIR/capture/clipboard" urls="$RUN_DIR/capture/opened-urls"
+    if [ -f "$clip" ]; then printf 'clipboard: %q\n' "$(cat "$clip")"; else printf 'clipboard: <untouched>\n'; fi
+    if [ -f "$urls" ]; then sed 's/^/opened: /' "$urls"; else printf 'opened: <none>\n'; fi
+    printf 'focused: %s\n' "$(focused_pane)"
+}
+
+cmd_panes() {
+    load_state
+    local tabs
+    tabs="$(h tab list --workspace "$WORKSPACE")"
+    h pane list --workspace "$WORKSPACE" | jq -r --argjson tabs "$tabs" '
+        ($tabs.result.tabs | map({(.tab_id): .label}) | add) as $labels
+        | .result.panes[]
+        | "\(.pane_id) \(.tab_id) \($labels[.tab_id] | @json)\(if .focused then " focused" else "" end)"'
+}
+
+cmd_down() {
+    load_state
+    h plugin log list --plugin "$PLUGIN_ID" --limit 50 > "$RUN_DIR/evidence/plugin-log.json" 2>/dev/null || true
+    cp "$HERDR_HOME/herdr/herdr-server.log" "$RUN_DIR/evidence/herdr-server.log" 2>/dev/null || true
+
+    # Safe here: `h` only ever reaches this run's private server.
+    h server stop >/dev/null 2>&1 || true
+    local i
+    for i in $(seq 1 30); do
+        kill -0 "$SERVER_PID" 2>/dev/null || break
+        nap
+    done
+    # Only ever signal the server this run started.
+    kill "$SERVER_PID" 2>/dev/null || true
+
+    case "$HERDR_HOME" in
+        /tmp/hp.*) rm -rf "$HERDR_HOME" ;;
+        *) log "refusing to delete unexpected herdr home: $HERDR_HOME" ;;
+    esac
+    mv "$RUN_DIR/server.out" "$RUN_DIR/evidence/server.out" 2>/dev/null || true
+    rm -rf "$RUN_DIR/shims" "$RUN_DIR/fixture" "$RUN_DIR/capture"
+    rm -f "$RUNS_DIR/current"
+    log "private herdr stopped; evidence kept in $RUN_DIR/evidence"
+    ls "$RUN_DIR/evidence"
+}
+
+main() {
+    local cmd="${1:-}"
+    [ -n "$cmd" ] || { usage; exit 2; }
+    shift
+    case "$cmd" in
+        up) cmd_up "$@" ;;
+        doctor) cmd_doctor ;;
+        seed) cmd_seed "$@" ;;
+        split) cmd_split "$@" ;;
+        invoke) cmd_invoke "$@" ;;
+        screen) cmd_screen "$@" ;;
+        select) cmd_select "$@" ;;
+        side-effects) cmd_side_effects ;;
+        panes) cmd_panes ;;
+        down) cmd_down ;;
+        -h|--help|help) usage ;;
+        *) usage; exit 2 ;;
+    esac
+}
+
+main "$@"

@@ -1,0 +1,15 @@
+# Project-local `.herdr-pluck.toml` for the fixture project.
+[[patterns]]
+name = "ticket"
+regex = "\\bPLK-[0-9]+\\b"
+priority = 25
+
+[[patterns]]
+name = "trace-id"
+regex = "trace_id=(?<match>[a-z0-9]+)"
+
+# Overlaps `global-prec` at the same priority; project-local must win.
+[[patterns]]
+name = "project-prec"
+regex = "prec=(?<match>[a-z]+)"
+priority = 25
