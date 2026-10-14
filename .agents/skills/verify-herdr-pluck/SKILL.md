@@ -16,20 +16,7 @@ V=.agents/skills/verify-herdr-pluck/scripts/pluck-verify
 $V --help
 ```
 
-Requirements: `herdr` 0.7.4 or newer, `jq`, `cargo`, macOS or Linux.
-
-## Worktrees and other checkouts
-
-The helper tests the checkout that contains your **current directory**, not the checkout the script lives in. It builds that checkout, links it into the private registry, and writes evidence to its `target/`. Doctor's `plugin root is this checkout` line names the checkout under test, so confirm it is the one you changed.
-
-If your checkout doesn't have this skill yet (for example, a worktree cut from an older commit), don't copy the skill in. Stay in your checkout and call another checkout's helper by absolute path:
-
-```bash
-V=/path/to/other/checkout/.agents/skills/verify-herdr-pluck/scripts/pluck-verify
-$V up   # still builds, links, and tests the checkout you're standing in
-```
-
-Feature-map and fixture edits belong in the copy of the skill that ships with your change. If your checkout has no copy, say so in your report instead of editing someone else's checkout.
+Requirements: `herdr` 0.7.4 or newer, `jq`, `cargo`, macOS or Linux. Any checkout or git worktree works. The helper tests the checkout that contains your current directory, and doctor's `plugin root is this checkout` line confirms which one.
 
 This complements the static checks AGENTS.md requires; it doesn't replace them: `cargo fmt --all -- --check`, `cargo test --all-features`, `cargo clippy --all-targets --all`.
 
