@@ -19,9 +19,14 @@ for var in $(compgen -e | grep '^HERDR_' || true); do unset "$var"; done
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SKILL_DIR="$(dirname "$SCRIPT_DIR")"
-REPO_ROOT="$(git -C "$SKILL_DIR" rev-parse --show-toplevel)"
-RUNS_DIR="$REPO_ROOT/target/verify-herdr-pluck"
 PLUGIN_ID="rmarganti.herdr-pluck"
+# The checkout under test is the one containing the caller's cwd, not the one
+# holding this script, so a worktree can borrow another checkout's helper.
+REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null)" \
+    || { printf 'pluck-verify: run from inside a herdr-pluck checkout\n' >&2; exit 1; }
+grep -q "^id = \"$PLUGIN_ID\"" "$REPO_ROOT/herdr-plugin.toml" 2>/dev/null \
+    || { printf 'pluck-verify: %s is not a herdr-pluck checkout\n' "$REPO_ROOT" >&2; exit 1; }
+RUNS_DIR="$REPO_ROOT/target/verify-herdr-pluck"
 PICKER_TAB_PREFIX="Herdr Pluck"
 
 die() { printf 'pluck-verify: %s\n' "$*" >&2; exit 1; }

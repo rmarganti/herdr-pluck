@@ -9,14 +9,27 @@ Herdr Pluck is a Herdr plugin. The user focuses a pane and invokes an action, us
 
 This skill drives that exact path through `herdr plugin action invoke`, the same entry point a keybinding uses. It runs against a private, throwaway Herdr, so the user's real Herdr, plugin config, clipboard, and browser are never touched.
 
-Run everything from the checkout root through one helper:
+Run everything from the root of **the checkout you changed** through one helper:
 
 ```bash
 V=.agents/skills/verify-herdr-pluck/scripts/pluck-verify
 $V --help
 ```
 
-Requirements: `herdr` 0.7.4 or newer, `jq`, `cargo`, macOS or Linux. Any checkout or git worktree works, because each run links its own checkout into its private registry.
+Requirements: `herdr` 0.7.4 or newer, `jq`, `cargo`, macOS or Linux.
+
+## Worktrees and other checkouts
+
+The helper tests the checkout that contains your **current directory**, not the checkout the script lives in. It builds that checkout, links it into the private registry, and writes evidence to its `target/`. Doctor's `plugin root is this checkout` line names the checkout under test, so confirm it is the one you changed.
+
+If your checkout doesn't have this skill yet (for example, a worktree cut from an older commit), don't copy the skill in. Stay in your checkout and call another checkout's helper by absolute path:
+
+```bash
+V=/path/to/other/checkout/.agents/skills/verify-herdr-pluck/scripts/pluck-verify
+$V up   # still builds, links, and tests the checkout you're standing in
+```
+
+Feature-map and fixture edits belong in the copy of the skill that ships with your change. If your checkout has no copy, say so in your report instead of editing someone else's checkout.
 
 This complements the static checks AGENTS.md requires; it doesn't replace them: `cargo fmt --all -- --check`, `cargo test --all-features`, `cargo clippy --all-targets --all`.
 
@@ -75,7 +88,7 @@ $V screen <name> [pane]        # save any pane's screen as extra evidence
 - **Focus decides the target.** `invoke` stops if Herdr reports a focused pane other than the recorded source pane.
 - Picker tabs are labelled `Herdr Pluck` (pluck) and `Herdr Pluck: Open URL` (open-url).
 
-The feature map in [`features/README.md`](features/README.md) lists every journey, its exact commands, and the observable result that proves it.
+The feature map in [`features/README.md`](features/README.md) lists every journey, its exact commands, and the observable result that proves it. **Before driving, read its "Choosing journeys" table.** It says which existing journeys your change must re-run, beyond a fixture for the new case, and how to update the map when user-facing behavior changes.
 
 ## Evidence
 
