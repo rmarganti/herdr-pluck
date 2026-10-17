@@ -1,11 +1,14 @@
 mod detect;
 mod error;
+mod osc52;
 mod runner;
 mod system;
 mod tool;
 
 pub use error::ClipboardError;
+pub use osc52::{Osc52Clipboard, Osc52Terminal, StdoutTerminal};
 
+use crate::model::ClipboardBackend;
 use detect::select_tool;
 use runner::ClipboardCommandRunner;
 use system::SystemCommandRunner;
@@ -22,7 +25,35 @@ pub trait Clipboard {
     fn copy(&self, text: &str) -> Result<CopySuccess, ClipboardError>;
 }
 
-/// System clipboard implementation using available platform command-line tools.
+/// Production clipboard for the configured [`ClipboardBackend`].
+#[derive(Debug, Clone, Copy)]
+pub enum ConfiguredClipboard {
+    Osc52(Osc52Clipboard),
+    System(SystemClipboard),
+}
+
+impl From<ClipboardBackend> for ConfiguredClipboard {
+    fn from(backend: ClipboardBackend) -> Self {
+        match backend {
+            ClipboardBackend::Osc52 => Self::Osc52(Osc52Clipboard::new(StdoutTerminal)),
+            ClipboardBackend::System => Self::System(SystemClipboard),
+        }
+    }
+}
+
+impl Clipboard for ConfiguredClipboard {
+    fn copy(&self, text: &str) -> Result<CopySuccess, ClipboardError> {
+        match self {
+            Self::Osc52(clipboard) => clipboard.copy(text),
+            Self::System(clipboard) => clipboard.copy(text),
+        }
+    }
+}
+
+/// Clipboard on the machine running this process, via platform command-line tools.
+///
+/// Inside Herdr that is the server's machine, which differs from the viewer's over
+/// `herdr --remote`.
 #[derive(Debug, Default, Clone, Copy)]
 pub struct SystemClipboard;
 

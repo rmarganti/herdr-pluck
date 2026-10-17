@@ -1,6 +1,6 @@
 # Pluck a visible token
 
-With a pane focused, the user invokes **Pluck visible token**. A temporary `Herdr Pluck` tab mirrors the pane and overlays short hints on every copyable token. Typing a hint copies that token to the system clipboard, closes the tab, and returns focus to the original pane. Escape or Ctrl-C cancels without copying.
+With a pane focused, the user invokes **Pluck visible token**. A temporary `Herdr Pluck` tab mirrors the pane and overlays short hints on every copyable token. Typing a hint copies that token to the clipboard of the machine the user is viewing Herdr from (even when the server is remote), closes the tab, and returns focus to the original pane. Escape or Ctrl-C cancels without copying.
 
 ## Sub-features
 
@@ -24,12 +24,14 @@ Preconditions:
 
 - **Hint every built-in.** Run `$V seed tokens.txt` and `$V invoke pluck`. In `picker.txt`, every value column has a hint over its first characters: `attps://…`, `sile:///…`, `drc/picker/session.rs`, `fa63023f`, `g23e4567-…`, `h92.168.40.12`, `jxdeadBEEF`, `keployment.apps/frontend`, `l876543210123`, and `qttps://example.com/trailing.`.
 - **Duplicates share a hint.** In the same screen, both `src/picker/session.rs` rows show the same hint (`d`).
-- **Copy.** Run `$V select d`. `clipboard: src/picker/session.rs`, and `focused:` is the source pane.
+- **Copy.** Run `$V select d`. `clipboard: src/picker/session.rs`, `host clipboard: <untouched>`, and `focused:` is the source pane.
 - **Trailing punctuation.** Run `$V invoke pluck` and `$V select q`. `clipboard: https://example.com/trailing`, without the period.
 - **Two-letter hints.** Run `$V seed many.txt` and `$V invoke pluck`. The 30 IPs show `aa`, `as`, … `sf`. Run `$V select s d`. `clipboard: 10.0.0.29`.
 - **Cancel.** Run `$V invoke pluck` and `$V select esc`, then `$V invoke pluck` and `$V select ctrl+c`. Both report `clipboard: <untouched>` and refocus the source pane.
 
 ## Gotchas
+
+- Copies travel picker → Herdr server → viewer client asynchronously. If `clipboard:` reads `<untouched>` after a real selection, check doctor's viewer-client lines before suspecting the plugin.
 
 - The shell prompt is part of the screen, so the prompt's cwd path also gets a hint. Ignore it.
 - Hint order is top-to-bottom, left-to-right over **unique** texts. Adding a line to a fixture shifts every later hint.

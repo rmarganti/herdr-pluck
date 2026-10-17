@@ -1,0 +1,3 @@
+# Alternate global config for the clipboard journeys: copy with the server
+# machine's clipboard tools instead of OSC 52. Install with `$V global-config`.
+clipboard = "system"

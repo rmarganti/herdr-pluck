@@ -2,7 +2,7 @@
 
 Herdr Pluck is a Herdr plugin for quickly copying visible terminal tokens or opening visible URLs with short keyboard hints, inspired by `tmux-fingers`.
 
-Invoke an action while a pane is focused and type the displayed hint for the item you want. The pluck action copies the selected text to your system clipboard, while the URL action opens the selection in your default browser. Escape or Ctrl-C cancels.
+Invoke an action while a pane is focused and type the displayed hint for the item you want. The pluck action copies the selected text to the clipboard of the machine you are viewing Herdr from, including over `herdr --remote`, while the URL action opens the selection in your default browser. Escape or Ctrl-C cancels.
 
 ![Herdr Pluck demo](artifacts/pluck-demo-themed.gif)
 
@@ -12,11 +12,11 @@ Invoke an action while a pane is focused and type the displayed hint for the ite
 - For release installs, a download tool:
     - `curl` or `wget`
 - Rust/Cargo only when forcing a source build or when no matching prebuilt binary is available
-- For copying, a system clipboard command:
+- Only with `clipboard = "system"` (see [Clipboard](#clipboard)), a clipboard command on the machine running the Herdr server:
     - macOS: `pbcopy`
     - Linux Wayland: `wl-copy`
     - Linux X11: `xclip` or `xsel`
-- For opening URLs:
+- For opening URLs, on the machine running the Herdr server:
     - macOS: `open`
     - Linux: `xdg-open`
 
@@ -167,6 +167,18 @@ Lower `priority` values win overlapping matches. If omitted, custom pattern prio
 
 When identical text appears more than once, every visible occurrence shows the same hint and copies the same text.
 
+## Clipboard
+
+By default, Herdr Pluck hands copied text to Herdr with an OSC 52 escape sequence, and Herdr writes it to the clipboard of the machine you are viewing Herdr from. Copies reach your local clipboard even when you are attached to a remote server with `herdr --remote`.
+
+To copy with clipboard commands on the machine running the Herdr server instead, set `clipboard` in the global config:
+
+```toml
+clipboard = "system" # default: "osc52"
+```
+
+`clipboard` is only read from the global config, not from project-local files.
+
 ## Releasing binaries
 
 Tag releases as `vX.Y.Z`. GitHub Actions validates the crate, builds release archives, and uploads platform binaries to the matching GitHub Release.
@@ -183,4 +195,4 @@ herdr plugin action list --plugin rmarganti.herdr-pluck
 
 If no release asset matches the plugin version, make sure Rust/Cargo is available for the local fallback build. Set `HERDR_PLUCK_BUILD_FROM_SOURCE=1` to skip the release download and build the checked-out source explicitly.
 
-If copying fails, install one of the supported clipboard tools for your platform and try again.
+If a copy doesn't reach your clipboard, check that copying a mouse selection in Herdr works on the machine you are viewing from; the default `osc52` clipboard relies on the same Herdr forwarding. With `clipboard = "system"`, install one of the supported clipboard tools on the server's machine.

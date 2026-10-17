@@ -39,9 +39,9 @@ pub fn build_picker_view(snapshot: &PickerSnapshot) -> PickerView {
         .as_ref()
         .map(|viewport| viewport.logical_lines.as_slice())
         .unwrap_or(&snapshot.source.logical_lines);
-    let matches = match snapshot.action {
+    let matches = match snapshot.settings.action {
         PickerAction::Copy => {
-            let custom_patterns = compile_pattern_specs(&snapshot.custom_patterns);
+            let custom_patterns = compile_pattern_specs(&snapshot.settings.custom_patterns);
             find_matches(logical_lines, &custom_patterns)
         }
         PickerAction::OpenUrl => find_openable_urls(logical_lines),
@@ -50,7 +50,7 @@ pub fn build_picker_view(snapshot: &PickerSnapshot) -> PickerView {
 
     let lines = if assignments.is_empty() {
         no_matches_view(
-            snapshot.action,
+            snapshot.settings.action,
             snapshot.source.target_content_width,
             snapshot.source.target_content_height,
         )
@@ -167,7 +167,9 @@ fn fit_to_width(text: &str, width: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::model::{PaneId, PaneTextCaptureMode, PickerReturnContext, SourcePaneSnapshot};
+    use crate::model::{
+        PaneId, PaneTextCaptureMode, PickerReturnContext, PickerSettings, SourcePaneSnapshot,
+    };
 
     fn snapshot(lines: Vec<&str>, width: u16, height: u16) -> PickerSnapshot {
         PickerSnapshot {
@@ -187,8 +189,7 @@ mod tests {
                 return_pane_id: PaneId::new("p1"),
                 zoom_picker: false,
             },
-            action: PickerAction::Copy,
-            custom_patterns: Vec::new(),
+            settings: PickerSettings::new(PickerAction::Copy),
         }
     }
 
@@ -209,7 +210,7 @@ mod tests {
     #[test]
     fn open_url_view_assigns_hints_only_to_openable_urls() {
         let mut snapshot = snapshot(vec!["https://example.com ftp://host/repo /tmp/file"], 50, 1);
-        snapshot.action = PickerAction::OpenUrl;
+        snapshot.settings.action = PickerAction::OpenUrl;
 
         let view = build_picker_view(&snapshot);
 
@@ -223,7 +224,7 @@ mod tests {
     #[test]
     fn open_url_no_match_view_uses_action_specific_message() {
         let mut snapshot = snapshot(vec!["ftp://host/repo"], 40, 3);
-        snapshot.action = PickerAction::OpenUrl;
+        snapshot.settings.action = PickerAction::OpenUrl;
 
         let view = build_picker_view(&snapshot);
 

@@ -27,6 +27,8 @@ Preconditions:
 
 ## Gotchas
 
+- URLs open on the machine running the Herdr server (the host shims), not the viewer. Over `herdr --remote` that is the remote machine; this is a known limitation, unlike copying.
+
 - The tab label is `Herdr Pluck: Open URL`, not `Herdr Pluck`.
 - Custom patterns never apply to this action, by design. Don't use `custom-patterns.txt` here.
 - `opened-urls` is written by the `open`/`xdg-open` shim. A real browser never launches during verification, so whether the OS handler accepts the URL is out of scope.

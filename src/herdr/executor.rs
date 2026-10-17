@@ -2,7 +2,7 @@ use crate::herdr::client::{HerdrClient, LaunchLayoutNode};
 use crate::herdr::layout::{derive_layout_recreation_plan, derive_source_geometry};
 use crate::herdr::snapshot::{build_source_snapshot, PickerLaunchFiles};
 use crate::model::{
-    LayoutNode, PaneId, PatternSpec, PickerAction, PickerReturnContext, PickerSnapshot,
+    LayoutNode, PaneId, PickerAction, PickerReturnContext, PickerSettings, PickerSnapshot,
 };
 use crate::viewport::map_visible_viewport;
 use anyhow::{bail, Context, Result};
@@ -13,8 +13,7 @@ pub fn launch_layout_tab_picker<C: HerdrClient>(
     client: &mut C,
     target: &PaneId,
     binary_path: &Path,
-    action: PickerAction,
-    custom_patterns: Vec<PatternSpec>,
+    settings: PickerSettings,
 ) -> Result<()> {
     let layout = client.pane_layout(target)?;
     let plan = derive_layout_recreation_plan(&layout, target)?;
@@ -48,8 +47,7 @@ pub fn launch_layout_tab_picker<C: HerdrClient>(
         viewport.logical_lines.clone(),
         Some(viewport),
         return_context.clone(),
-        action,
-        custom_patterns,
+        settings,
     )?;
 
     let files = PickerLaunchFiles::create(&snapshot)?;
@@ -66,7 +64,7 @@ pub fn launch_layout_tab_picker<C: HerdrClient>(
         .workspace_id
         .as_deref()
         .context("pane layout did not include workspace id")?;
-    let tab_label = match action {
+    let tab_label = match snapshot.settings.action {
         PickerAction::Copy => "Herdr Pluck",
         PickerAction::OpenUrl => "Herdr Pluck: Open URL",
     };
@@ -322,8 +320,7 @@ mod tests {
                 return_pane_id: PaneId::new("w1:p1"),
                 zoom_picker,
             },
-            action: PickerAction::Copy,
-            custom_patterns: Vec::new(),
+            settings: PickerSettings::new(PickerAction::Copy),
         }
     }
 
@@ -384,8 +381,7 @@ mod tests {
             &mut client,
             &PaneId::new("w1:p1"),
             Path::new("/tmp/herdr pluck"),
-            PickerAction::Copy,
-            Vec::new(),
+            PickerSettings::new(PickerAction::Copy),
         )
         .unwrap();
 
@@ -421,8 +417,7 @@ mod tests {
             &mut client,
             &PaneId::new("w1:p1"),
             Path::new("/tmp/herdr-pluck"),
-            PickerAction::Copy,
-            Vec::new(),
+            PickerSettings::new(PickerAction::Copy),
         )
         .unwrap_err();
 

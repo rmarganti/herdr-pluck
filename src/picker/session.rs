@@ -1,4 +1,4 @@
-use crate::clipboard::{Clipboard, SystemClipboard};
+use crate::clipboard::{Clipboard, ConfiguredClipboard};
 use crate::model::{
     PickerAction, PickerOutcome, PickerSnapshot, RenderLine, RenderSpan, RenderStyle,
 };
@@ -18,7 +18,7 @@ use std::io::{self, Write};
 pub fn run_picker(snapshot: &PickerSnapshot) -> Result<PickerOutcome> {
     let mut stdout = io::stdout();
     let mut input = CrosstermInputSource;
-    let clipboard = SystemClipboard;
+    let clipboard = ConfiguredClipboard::from(snapshot.settings.clipboard);
     let url_opener = SystemUrlOpener;
     let _raw_mode = RawModeGuard::enable()?;
     let _cursor = CursorGuard::hide()?;
@@ -58,7 +58,7 @@ where
                     .assignments
                     .copied_text_for_hint(&hint)
                     .ok_or_else(|| anyhow!("accepted unknown picker hint {hint}"))?;
-                let outcome = match snapshot.action {
+                let outcome = match snapshot.settings.action {
                     PickerAction::Copy => {
                         copy_selected_text(clipboard, text).map(|()| PickerOutcome::Copied {
                             text: text.to_string(),
@@ -71,7 +71,7 @@ where
                     }
                 };
                 if let Err(error) = outcome {
-                    emit_selection_failure(output, snapshot.action, text, &error)?;
+                    emit_selection_failure(output, snapshot.settings.action, text, &error)?;
                     return Err(error);
                 }
                 return outcome;
@@ -118,7 +118,9 @@ fn emit_selection_failure(
 mod tests {
     use super::*;
     use crate::clipboard::{ClipboardError, CopySuccess};
-    use crate::model::{PaneId, PaneTextCaptureMode, PickerReturnContext, SourcePaneSnapshot};
+    use crate::model::{
+        PaneId, PaneTextCaptureMode, PickerReturnContext, PickerSettings, SourcePaneSnapshot,
+    };
     use crate::url_opener::{OpenUrlSuccess, UrlOpenError};
     use std::cell::RefCell;
 
@@ -199,8 +201,7 @@ mod tests {
                 return_pane_id: PaneId::new("p1"),
                 zoom_picker: false,
             },
-            action: PickerAction::Copy,
-            custom_patterns: Vec::new(),
+            settings: PickerSettings::new(PickerAction::Copy),
         }
     }
 
@@ -234,7 +235,7 @@ mod tests {
     #[test]
     fn open_url_hint_uses_opener_without_copying() {
         let mut snapshot = snapshot(vec!["open https://example.com/path"], 40, 1);
-        snapshot.action = PickerAction::OpenUrl;
+        snapshot.settings.action = PickerAction::OpenUrl;
         let mut input = FakeInput::new(vec![PickerInputEvent::Char('a')]);
         let clipboard = FakeClipboard::default();
         let opener = FakeUrlOpener::default();
@@ -259,7 +260,7 @@ mod tests {
     #[test]
     fn opener_failure_is_reported_and_not_treated_as_success() {
         let mut snapshot = snapshot(vec!["https://example.com"], 40, 1);
-        snapshot.action = PickerAction::OpenUrl;
+        snapshot.settings.action = PickerAction::OpenUrl;
         let mut input = FakeInput::new(vec![PickerInputEvent::Char('a')]);
         let clipboard = FakeClipboard::default();
         let opener = FakeUrlOpener {

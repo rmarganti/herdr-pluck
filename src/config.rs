@@ -1,4 +1,4 @@
-use crate::model::PatternSpec;
+use crate::model::{ClipboardBackend, PatternSpec, PickerAction, PickerSettings};
 use crate::patterns::CustomPatternDefinition;
 use anyhow::{Context, Result};
 use serde::Deserialize;
@@ -11,8 +11,12 @@ const CONFIG_FILE: &str = "config.toml";
 const DEFAULT_PROJECT_CONFIG_FILE: &str = ".herdr-pluck.toml";
 
 /// User-editable global Herdr Pluck configuration file.
+///
+/// Project-local files share this shape, but only their `patterns` are used.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
 struct GlobalConfigFile {
+    #[serde(default)]
+    clipboard: ClipboardBackend,
     #[serde(default)]
     project: ProjectConfig,
     #[serde(default)]
@@ -58,14 +62,21 @@ fn default_project_pattern_files() -> Vec<String> {
     vec![DEFAULT_PROJECT_CONFIG_FILE.to_string()]
 }
 
-/// Resolves picker pattern specs before launching the temporary picker pane.
-pub fn resolve_pattern_specs(focused_pane_cwd: Option<&Path>) -> Vec<PatternSpec> {
-    match try_resolve_pattern_specs(focused_pane_cwd) {
-        Ok(patterns) => patterns,
-        Err(error) => {
-            eprintln!("Herdr Pluck: failed to load custom patterns: {error:#}");
-            Vec::new()
-        }
+/// Resolves picker settings for an action before launching the temporary picker pane.
+///
+/// Config is only read for copying; a config that fails to load falls back to defaults.
+pub fn resolve_picker_settings(
+    action: PickerAction,
+    focused_pane_cwd: Option<&Path>,
+) -> PickerSettings {
+    match action {
+        PickerAction::Copy => load_global_config()
+            .map(|config| copy_settings(config, focused_pane_cwd))
+            .unwrap_or_else(|error| {
+                eprintln!("Herdr Pluck: failed to load config, using defaults: {error:#}");
+                PickerSettings::new(action)
+            }),
+        PickerAction::OpenUrl => PickerSettings::new(action),
     }
 }
 
@@ -86,8 +97,10 @@ pub fn compile_pattern_specs(specs: &[PatternSpec]) -> Vec<CustomPatternDefiniti
         .collect()
 }
 
-fn try_resolve_pattern_specs(focused_pane_cwd: Option<&Path>) -> Result<Vec<PatternSpec>> {
-    let global_config = load_global_config()?;
+fn copy_settings(
+    global_config: GlobalConfigFile,
+    focused_pane_cwd: Option<&Path>,
+) -> PickerSettings {
     let mut specs = Vec::new();
 
     if global_config.project.patterns {
@@ -99,15 +112,16 @@ fn try_resolve_pattern_specs(focused_pane_cwd: Option<&Path>) -> Result<Vec<Patt
         }
     }
     specs.extend(entries_to_specs(global_config.patterns));
-    Ok(specs)
+    PickerSettings {
+        action: PickerAction::Copy,
+        custom_patterns: specs,
+        clipboard: global_config.clipboard,
+    }
 }
 
 fn load_global_config() -> Result<GlobalConfigFile> {
     let Some(config_dir) = global_config_dir()? else {
-        return Ok(GlobalConfigFile {
-            project: ProjectConfig::default(),
-            patterns: Vec::new(),
-        });
+        return Ok(GlobalConfigFile::default());
     };
     load_config_file(&config_dir.join(CONFIG_FILE)).map(|config| config.unwrap_or_default())
 }
@@ -204,6 +218,50 @@ regex = "ABC-(?<match>[0-9]+)"
         assert_eq!(specs[0].priority, 25);
         assert!(config.project.patterns);
         assert_eq!(config.project.pattern_files, vec![".herdr-pluck.toml"]);
+    }
+
+    #[test]
+    fn clipboard_defaults_to_osc52() {
+        let config: GlobalConfigFile = toml::from_str("").unwrap();
+
+        assert_eq!(
+            copy_settings(config, None).clipboard,
+            ClipboardBackend::Osc52
+        );
+    }
+
+    #[test]
+    fn clipboard_system_is_carried_into_copy_settings() {
+        let config: GlobalConfigFile = toml::from_str(
+            r#"clipboard = "system"
+
+[[patterns]]
+name = "ticket"
+regex = "ABC-[0-9]+"
+"#,
+        )
+        .unwrap();
+
+        let settings = copy_settings(config, None);
+
+        assert_eq!(settings.action, PickerAction::Copy);
+        assert_eq!(settings.clipboard, ClipboardBackend::System);
+        assert_eq!(settings.custom_patterns.len(), 1);
+    }
+
+    #[test]
+    fn unknown_clipboard_backend_is_rejected() {
+        let error = toml::from_str::<GlobalConfigFile>(r#"clipboard = "pbcopy""#).unwrap_err();
+
+        assert!(error.to_string().contains("unknown variant `pbcopy`"));
+    }
+
+    #[test]
+    fn open_url_settings_use_defaults_without_reading_config() {
+        assert_eq!(
+            resolve_picker_settings(PickerAction::OpenUrl, None),
+            PickerSettings::new(PickerAction::OpenUrl)
+        );
     }
 
     #[test]
