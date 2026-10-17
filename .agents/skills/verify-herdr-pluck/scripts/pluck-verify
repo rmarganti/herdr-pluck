@@ -10,6 +10,10 @@
 #   - Clipboard and URL-launcher commands are PATH shims on the private server.
 #     They record exactly what the plugin handed them and never reach the real
 #     clipboard or browser.
+#   - A Herdr client stands in for the user's terminal on a private PTY, with its
+#     own clipboard shims. Herdr forwards pane OSC 52 writes only to that viewing
+#     client, so its captures prove where a copy lands for the user, and the host
+#     shims prove the server machine's clipboard was left alone.
 #
 # Run state and evidence live in target/verify-herdr-pluck/<run-id>/, and
 # `current` points at the active run so each subcommand can be a separate shell.
@@ -41,6 +45,7 @@ usage: pluck-verify <command> [args]
   seed <fixture> [pane]    clear the source pane (or <pane>) and print a fixture file
   split <fixture>          split the source pane right, seed it, make it the source
   invoke <pluck|open-url>  invoke the action on the source pane; prints the hinted picker
+  global-config <fixture>  replace the private global plugin config with a fixture
   screen <name> [pane]     save the picker (or <pane>) screen to evidence/<name>.txt
   select <keys...>         type hint keys into the picker, wait for it to close,
                            and record the clipboard/opened-URL side effects
@@ -95,19 +100,41 @@ focused_pane() {
     h pane list --workspace "$WORKSPACE" | jq -r '.result.panes[] | select(.focused) | .pane_id'
 }
 
+# Host shims sit on the server's PATH (plugin actions inherit it); viewer shims sit
+# on the attached client's PATH. Each records copies to its own capture file.
 write_shims() {
-    local shims="$RUN_DIR/shims" capture="$RUN_DIR/capture" name
+    local shims="$RUN_DIR/shims" viewer="$RUN_DIR/viewer-shims" capture="$RUN_DIR/capture" name
     cat > "$shims/pbcopy" <<EOF
 #!/bin/sh
-cat > "$capture/clipboard"
+cat > "$capture/host-clipboard"
 EOF
     for name in wl-copy xclip xsel; do cp "$shims/pbcopy" "$shims/$name"; done
+    # The client also reads its clipboard (xclip -out, xsel --output) to skip
+    # duplicate writes; reads must not clobber the capture.
+    cat > "$viewer/pbcopy" <<EOF
+#!/bin/sh
+case " \$* " in *" -out "*|*" -o "*|*" --output "*) exit 0 ;; esac
+cat > "$capture/clipboard"
+EOF
+    for name in wl-copy xclip xsel; do cp "$viewer/pbcopy" "$viewer/$name"; done
+    printf '#!/bin/sh\n' > "$viewer/pbpaste"
+    cp "$viewer/pbpaste" "$viewer/wl-paste"
     cat > "$shims/open" <<EOF
 #!/bin/sh
 printf '%s\n' "\$@" >> "$capture/opened-urls"
 EOF
     cp "$shims/open" "$shims/xdg-open"
-    chmod +x "$shims/"*
+    chmod +x "$shims/"* "$viewer/"*
+}
+
+# Attaches the viewing client. SSH/VS Code variables are dropped so the client
+# uses its native clipboard tools (the viewer shims) instead of re-emitting OSC 52.
+attach_viewer() {
+    env -u SSH_CONNECTION -u SSH_TTY -u VSCODE_IPC_HOOK_CLI \
+        PATH="$RUN_DIR/viewer-shims:$PATH" XDG_CONFIG_HOME="$HERDR_HOME" TERM=xterm-256color \
+        nohup python3 "$SCRIPT_DIR/attach-viewer.py" 200 50 "$RUN_DIR/viewer.out" herdr \
+        > "$RUN_DIR/viewer.log" 2>&1 &
+    set_state VIEWER_PID "$!"
 }
 
 cmd_up() {
@@ -115,6 +142,7 @@ cmd_up() {
     [ "${1:-}" = "--no-build" ] && build=0
     command -v herdr >/dev/null || die "herdr is not on PATH"
     command -v jq >/dev/null || die "jq is not on PATH"
+    command -v python3 >/dev/null || die "python3 is not on PATH"
     if [ -L "$RUNS_DIR/current" ]; then
         die "run $(readlink "$RUNS_DIR/current") is still active; 'pluck-verify down' first"
     fi
@@ -125,7 +153,7 @@ cmd_up() {
     fi
 
     RUN_DIR="$RUNS_DIR/$(date +%Y%m%d-%H%M%S)-$$"
-    mkdir -p "$RUN_DIR/evidence" "$RUN_DIR/capture" "$RUN_DIR/shims" \
+    mkdir -p "$RUN_DIR/evidence" "$RUN_DIR/capture" "$RUN_DIR/shims" "$RUN_DIR/viewer-shims" \
         "$RUN_DIR/fixture/.git" "$RUN_DIR/fixture/project"
     cp "$SKILL_DIR/fixtures/project-config.toml" "$RUN_DIR/fixture/.herdr-pluck.toml"
     write_shims
@@ -152,11 +180,15 @@ cmd_up() {
     config_dir="$(h plugin config-dir "$PLUGIN_ID")"
     mkdir -p "$config_dir"
     cp "$SKILL_DIR/fixtures/global-config.toml" "$config_dir/config.toml"
+    set_state GLOBAL_FIXTURE "$SKILL_DIR/fixtures/global-config.toml"
 
     local created
     created="$(h workspace create --cwd "$RUN_DIR/fixture/project" --label verify --focus)"
     set_state WORKSPACE "$(jq -r '.result.workspace.workspace_id' <<<"$created")"
     set_state SOURCE_PANE "$(jq -r '.result.root_pane.pane_id' <<<"$created")"
+    attach_viewer
+    # Give the client time to connect and settle its terminal size.
+    nap 2
 
     log "run dir:     $RUN_DIR"
     log "herdr home:  $HERDR_HOME"
@@ -191,6 +223,17 @@ cmd_doctor() {
     fi
     check "server PATH starts with clipboard/open shims" grep -q "PATH=$RUN_DIR/shims:" <<<"$env_dump"
 
+    local viewer_client
+    viewer_client="$(pgrep -P "${VIEWER_PID:-0}" herdr 2>/dev/null | head -n1 || true)"
+    check "viewer client attached (pid ${viewer_client:-none})" test -n "$viewer_client"
+    if [ -r "/proc/${viewer_client:-0}/environ" ]; then
+        env_dump="$(tr '\0' '\n' < "/proc/$viewer_client/environ")"
+    else
+        env_dump="$(ps -E -ww -o command= -p "${viewer_client:-0}" 2>/dev/null || true)"
+    fi
+    check "viewer client PATH starts with viewer clipboard shims" \
+        grep -q "PATH=$RUN_DIR/viewer-shims:" <<<"$env_dump"
+
     local plugins ids root
     plugins="$(h plugin list --json 2>/dev/null || true)"
     ids="$(jq -r '[.result.plugins[] | select(.enabled) | .plugin_id] | join(",")' <<<"$plugins")"
@@ -200,8 +243,8 @@ cmd_doctor() {
 
     local config_dir
     config_dir="$(h plugin config-dir "$PLUGIN_ID" 2>/dev/null || true)"
-    check "global plugin config is the private fixture" \
-        cmp -s "$config_dir/config.toml" "$SKILL_DIR/fixtures/global-config.toml"
+    check "global plugin config is the private fixture ($(basename "$GLOBAL_FIXTURE"))" \
+        cmp -s "$config_dir/config.toml" "$GLOBAL_FIXTURE"
 
     local version reported
     version="$(awk -F'"' '/^version = "/ { print $2; exit }' "$REPO_ROOT/herdr-plugin.toml")"
@@ -294,6 +337,17 @@ cmd_invoke() {
     cmd_screen "$drive.picker" "$pane"
 }
 
+# Plugin config is read on every action invoke, so the swap applies to the next drive.
+cmd_global_config() {
+    load_state
+    local fixture config_dir
+    fixture="$(fixture_path "${1:?fixture required}")"
+    config_dir="$(h plugin config-dir "$PLUGIN_ID")"
+    cp "$fixture" "$config_dir/config.toml"
+    set_state GLOBAL_FIXTURE "$fixture"
+    printf 'global config: %s\n' "$(basename "$fixture")"
+}
+
 cmd_screen() {
     load_state
     local name="${1:?name required}" pane="${2:-${PICKER_PANE:-}}"
@@ -318,18 +372,21 @@ cmd_select() {
     done
     [ -z "$(picker_tab)" ] || die "picker still open after keys '$*'; send more keys or 'select esc'"
     set_state PICKER_PANE ""
-    # The picker waits on the clipboard/open command; give the shim's write a beat anyway.
-    nap 0.2
+    # Clipboard writes reach the viewer asynchronously through Herdr; give them a beat.
+    nap 0.5
 
     if [ -f "$RUN_DIR/capture/clipboard" ]; then cp "$RUN_DIR/capture/clipboard" "$ev.clipboard"; fi
+    if [ -f "$RUN_DIR/capture/host-clipboard" ]; then cp "$RUN_DIR/capture/host-clipboard" "$ev.host-clipboard"; fi
     if [ -f "$RUN_DIR/capture/opened-urls" ]; then cp "$RUN_DIR/capture/opened-urls" "$ev.opened-urls"; fi
     cmd_side_effects | tee "$ev.result.txt"
 }
 
 cmd_side_effects() {
     load_state
-    local clip="$RUN_DIR/capture/clipboard" urls="$RUN_DIR/capture/opened-urls"
+    local clip="$RUN_DIR/capture/clipboard" host="$RUN_DIR/capture/host-clipboard"
+    local urls="$RUN_DIR/capture/opened-urls"
     if [ -f "$clip" ]; then printf 'clipboard: %q\n' "$(cat "$clip")"; else printf 'clipboard: <untouched>\n'; fi
+    if [ -f "$host" ]; then printf 'host clipboard: %q\n' "$(cat "$host")"; else printf 'host clipboard: <untouched>\n'; fi
     if [ -f "$urls" ]; then sed 's/^/opened: /' "$urls"; else printf 'opened: <none>\n'; fi
     printf 'focused: %s\n' "$(focused_pane)"
 }
@@ -356,15 +413,18 @@ cmd_down() {
         kill -0 "$SERVER_PID" 2>/dev/null || break
         nap
     done
-    # Only ever signal the server this run started.
+    # Only ever signal the server and viewer this run started.
     kill "$SERVER_PID" 2>/dev/null || true
+    [ -z "${VIEWER_PID:-}" ] || kill "$VIEWER_PID" 2>/dev/null || true
 
     case "$HERDR_HOME" in
         /tmp/hp.*) rm -rf "$HERDR_HOME" ;;
         *) log "refusing to delete unexpected herdr home: $HERDR_HOME" ;;
     esac
     mv "$RUN_DIR/server.out" "$RUN_DIR/evidence/server.out" 2>/dev/null || true
-    rm -rf "$RUN_DIR/shims" "$RUN_DIR/fixture" "$RUN_DIR/capture"
+    mv "$RUN_DIR/viewer.log" "$RUN_DIR/evidence/viewer.log" 2>/dev/null || true
+    rm -rf "$RUN_DIR/shims" "$RUN_DIR/viewer-shims" "$RUN_DIR/fixture" "$RUN_DIR/capture" \
+        "$RUN_DIR/viewer.out"
     rm -f "$RUNS_DIR/current"
     log "private herdr stopped; evidence kept in $RUN_DIR/evidence"
     ls "$RUN_DIR/evidence"
@@ -380,6 +440,7 @@ main() {
         seed) cmd_seed "$@" ;;
         split) cmd_split "$@" ;;
         invoke) cmd_invoke "$@" ;;
+        global-config) cmd_global_config "$@" ;;
         screen) cmd_screen "$@" ;;
         select) cmd_select "$@" ;;
         side-effects) cmd_side_effects ;;

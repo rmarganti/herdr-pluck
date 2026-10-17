@@ -25,12 +25,12 @@ A proof of a change is the new behavior **plus** the existing journeys that shar
 | If you changed… | Run at least |
 | --- | --- |
 | Built-in patterns, trimming, overlap rules (`src/patterns.rs`) | All of [pluck-copy](./pluck-copy.md), all of [custom-patterns](./custom-patterns.md), and "Only URLs are hinted" from [open-url](./open-url.md) |
-| Custom pattern loading or discovery (`src/config.rs`) | All of [custom-patterns](./custom-patterns.md) |
+| Config loading or discovery (`src/config.rs`) | All of [custom-patterns](./custom-patterns.md) and all of [clipboard](./clipboard.md) |
 | Hint assignment (`src/hints.rs`) | "Duplicates share a hint" and "Two-letter hints" from [pluck-copy](./pluck-copy.md) |
 | Rendering (`src/renderer*`, `src/viewport.rs`, `src/picker/render.rs`) | "Hint every built-in", "Two-letter hints", the [open-url](./open-url.md) empty state, and "Siblings are blank" from [split-layouts](./split-layouts.md) |
 | Key handling or picker lifecycle (`src/picker/session.rs`) | "Copy", "Two-letter hints", and "Cancel" from [pluck-copy](./pluck-copy.md), plus the [open-url](./open-url.md) empty state |
 | Herdr integration: layout, launch, cleanup, focus (`src/herdr/*`) | All of [split-layouts](./split-layouts.md), plus "Copy" and "Cancel" from [pluck-copy](./pluck-copy.md) |
-| Clipboard (`src/clipboard/*`) | "Copy" and "Cancel" from [pluck-copy](./pluck-copy.md) |
+| Clipboard (`src/clipboard/*`) | All of [clipboard](./clipboard.md), plus "Cancel" from [pluck-copy](./pluck-copy.md) |
 | URL opening (`src/url_opener/*`) | All of [open-url](./open-url.md) |
 | Build or packaging (`scripts/install-binary.sh`, `herdr-plugin.toml`, `Cargo.toml`) | `$V up` with the build, then "Copy" from [pluck-copy](./pluck-copy.md) |
 
@@ -43,7 +43,7 @@ When the change adds or alters user-facing behavior, update the map in the same 
 ## Proof and skip reporting
 
 - Every drive leaves `evidence/NN-<action>.picker.txt`, which is what the user saw, and `evidence/NN-<action>.result.txt`, which records the clipboard, opened URLs, and the focused pane afterwards.
-- Copy proof is the exact bytes in `NN-pluck.clipboard`. Open proof is `NN-open-url.opened-urls`. For cancel and open-url, the absence of a clipboard capture is the proof.
+- Copy proof is the exact bytes in `NN-pluck.clipboard` (the viewer client's clipboard) plus `host clipboard: <untouched>` in `result.txt`. Open proof is `NN-open-url.opened-urls`. For cancel and open-url, the absence of a clipboard capture is the proof.
 - Focus proof: `focused:` in `result.txt` equals the source pane, and doctor reports no leftover picker tab.
 - Report the drive id with each claim, for example "03-pluck copied `src/picker/session.rs`".
 - Report an unreachable path with the attempted command and the unmet precondition. Do not report a skipped entry point as verified through another one.
@@ -64,4 +64,5 @@ Keep implementation details out unless they explain a gotcha.
 - [Pluck a visible token](./pluck-copy.md) covers built-in token types, duplicate hints, trailing punctuation, two-letter hints, the empty state, and cancel.
 - [Open a visible URL](./open-url.md) covers URL-only hinting, launching `http(s)://` and `file://` URLs, the clipboard staying untouched, and the empty state.
 - [Custom patterns](./custom-patterns.md) covers global and project-local patterns, `match` captures, and priority over built-ins.
+- [Clipboard backends](./clipboard.md) covers the default OSC 52 copy to the viewing client, `clipboard = "system"`, and invalid values.
 - [Split layouts](./split-layouts.md) covers mirroring the source layout, hinting only the target pane, and returning focus to the source pane.

@@ -6,7 +6,7 @@ mod protocol;
 pub mod snapshot;
 mod socket;
 
-use crate::config::resolve_pattern_specs;
+use crate::config::resolve_picker_settings;
 use crate::herdr::client::SocketHerdrClient;
 use crate::herdr::context::HerdrContext;
 use crate::herdr::executor::{
@@ -55,12 +55,9 @@ impl HerdrAdapter {
 
     fn open_picker(&self, target: &PaneId, action: PickerAction) -> Result<()> {
         let binary = std::env::current_exe().context("failed to locate herdr-pluck binary")?;
-        let patterns = match action {
-            PickerAction::Copy => resolve_pattern_specs(self.context.focused_pane_cwd().as_deref()),
-            PickerAction::OpenUrl => Vec::new(),
-        };
+        let settings = resolve_picker_settings(action, self.context.focused_pane_cwd().as_deref());
         let mut client = SocketHerdrClient::from_context(&self.context)?;
-        launch_layout_tab_picker(&mut client, target, &binary, action, patterns)?;
+        launch_layout_tab_picker(&mut client, target, &binary, settings)?;
         Ok(())
     }
 

@@ -168,15 +168,46 @@ pub enum PickerAction {
     OpenUrl,
 }
 
+/// Where a copied selection is written, chosen by the global `clipboard` config key.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ClipboardBackend {
+    /// Hand the text to Herdr with OSC 52. Herdr writes it to the clipboard of the
+    /// machine the user is viewing from, which also works over `herdr --remote`.
+    #[default]
+    Osc52,
+    /// Run a clipboard command (`pbcopy`, `wl-copy`, `xclip`, `xsel`) on the machine
+    /// running the Herdr server.
+    System,
+}
+
+/// Selection behavior resolved from the invoked action and user config at launch time.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PickerSettings {
+    #[serde(default)]
+    pub action: PickerAction,
+    #[serde(default)]
+    pub custom_patterns: Vec<PatternSpec>,
+    #[serde(default)]
+    pub clipboard: ClipboardBackend,
+}
+
+impl PickerSettings {
+    pub fn new(action: PickerAction) -> Self {
+        Self {
+            action,
+            ..Self::default()
+        }
+    }
+}
+
 /// Full picker launch payload passed from the action process to picker mode.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PickerSnapshot {
     pub source: SourcePaneSnapshot,
     pub session: PickerReturnContext,
     #[serde(default)]
-    pub action: PickerAction,
-    #[serde(default)]
-    pub custom_patterns: Vec<PatternSpec>,
+    pub settings: PickerSettings,
 }
 
 /// Direction of a Herdr binary pane split as exposed by layout snapshots and replay commands.

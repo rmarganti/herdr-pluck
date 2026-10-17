@@ -5,7 +5,7 @@ description: Live, end-to-end verification of the Herdr Pluck plugin. Builds thi
 
 # Verify Herdr Pluck
 
-Herdr Pluck is a Herdr plugin. The user focuses a pane and invokes an action, usually through a keybinding. The plugin then opens a temporary picker tab that mirrors the source layout and overlays one- or two-letter hints on visible tokens. Typing a hint copies the token (`pluck`) or opens the URL (`open-url`), closes the tab, and returns focus to the source pane.
+Herdr Pluck is a Herdr plugin. The user focuses a pane and invokes an action, usually through a keybinding. The plugin then opens a temporary picker tab that mirrors the source layout and overlays one- or two-letter hints on visible tokens. Typing a hint copies the token (`pluck`, through Herdr's OSC 52 forwarding to the viewing client) or opens the URL (`open-url`), closes the tab, and returns focus to the source pane.
 
 This skill drives that exact path through `herdr plugin action invoke`, the same entry point a keybinding uses. It runs against a private, throwaway Herdr, so the user's real Herdr, plugin config, clipboard, and browser are never touched.
 
@@ -16,7 +16,7 @@ V=.agents/skills/verify-herdr-pluck/scripts/pluck-verify
 $V --help
 ```
 
-Requirements: `herdr` 0.7.4 or newer, `jq`, `cargo`, macOS or Linux. Any checkout or git worktree works. The helper tests the checkout that contains your current directory, and doctor's `plugin root is this checkout` line confirms which one.
+Requirements: `herdr` 0.7.4 or newer, `jq`, `cargo`, `python3`, macOS or Linux. Any checkout or git worktree works. The helper tests the checkout that contains your current directory, and doctor's `plugin root is this checkout` line confirms which one.
 
 This complements the static checks AGENTS.md requires; it doesn't replace them: `cargo fmt --all -- --check`, `cargo test --all-features`, `cargo clippy --all-targets --all`.
 
@@ -32,9 +32,10 @@ $V up --no-build # reuse the current bin/herdr-pluck
 1. Runs the plugin's real build hook in source mode: `HERDR_PLUCK_BUILD_FROM_SOURCE=1 ./scripts/install-binary.sh`.
 2. Creates `target/verify-herdr-pluck/<run-id>/` and points `target/verify-herdr-pluck/current` at it. Every later subcommand reads `current`, so separate shell calls share one run. Only one run per checkout can be active.
 3. Starts a headless `herdr server` with `XDG_CONFIG_HOME` set to a fresh `/tmp/hp.XXXXXX` directory. That gives the run its own plugin registry, plugin config dir, sockets, and sessions. The path stays short because Unix socket paths have a length limit.
-4. Puts shims first on that server's `PATH` for `pbcopy`, `wl-copy`, `xclip`, `xsel`, `open`, and `xdg-open`. Plugin actions inherit the server's environment, so the plugin's real command runners call the shims, which record what they receive.
-5. Runs `herdr plugin link <checkout>` in the private registry, then installs `fixtures/global-config.toml` as the private global plugin config.
+4. Puts shims first on that server's `PATH` for `pbcopy`, `wl-copy`, `xclip`, `xsel`, `open`, and `xdg-open`. Plugin actions inherit the server's environment, so anything the plugin launches on the host calls the shims, which record what they receive.
+5. Runs `herdr plugin link <checkout>` in the private registry, then installs `fixtures/global-config.toml` as the private global plugin config. `$V global-config <fixture>` swaps it later.
 6. Creates workspace `verify` with cwd `fixture/project`, under a fake Git root (`fixture/.git`) whose `.herdr-pluck.toml` comes from `fixtures/project-config.toml`. The root pane becomes the **source pane**.
+7. Attaches a **viewer client**: a real `herdr` client on a private 200x50 PTY (`scripts/attach-viewer.py`), standing in for the user's terminal. It has its own clipboard shims on `PATH`, and SSH variables are removed so it uses them. Pluck copies with OSC 52, and Herdr forwards that only to the foreground client, so without a viewer nothing would be copied anywhere.
 
 The run is ready when `up` ends with doctor printing only `ok` lines. Teardown is `$V down`; see [Cleanup](#cleanup).
 
@@ -50,8 +51,9 @@ Doctor is read-only. Run it first whenever anything looks off, and again after a
 
 - The server PID started by this run is alive, and its socket is inside this run's private home.
 - The server's `PATH` starts with this run's shims. Without that, a drive would write to the real clipboard or open a real browser.
+- The viewer client is attached and its `PATH` starts with the viewer shims. Without it, copies have nowhere to land.
 - `rmarganti.herdr-pluck` is the only enabled plugin, and its `plugin_root` is this checkout.
-- The private global plugin config is exactly `fixtures/global-config.toml`.
+- The private global plugin config is exactly the active fixture: `fixtures/global-config.toml`, or the last one passed to `$V global-config`.
 - `bin/herdr-pluck --version` matches `herdr-plugin.toml`, and the binary is byte-identical to `target/release/herdr-pluck`, so the tested binary is this source.
 - The source pane is focused, and no `Herdr Pluck*` picker tab is open.
 
@@ -66,6 +68,7 @@ $V select d                    # type the hint shown on screen; waits for the pi
 $V select s d                  # two-letter hint
 $V select esc                  # cancel (ctrl+c also cancels)
 $V split custom-patterns.txt   # split the source pane right, seed it, make it the new source
+$V global-config global-config-system-clipboard.toml  # swap the global plugin config; next invoke reads it
 $V panes                       # list panes with their tab label and focus
 $V screen <name> [pane]        # save any pane's screen as extra evidence
 ```
@@ -86,7 +89,8 @@ Everything lands in `target/verify-herdr-pluck/<run-id>/evidence/` and survives 
 | `NN-<action>.invoke.json` | The real action ran, with Herdr's invocation context (`focused_pane_id`, `focused_pane_cwd`) |
 | `NN-<action>.picker.txt` / `.ansi` | The hinted screen the user saw (`.ansi` keeps the hint styling) |
 | `NN-<action>.keys.txt` | The keys typed |
-| `NN-<action>.clipboard` | The exact bytes sent to the clipboard tool, with no trailing newline |
+| `NN-<action>.clipboard` | The exact bytes that reached the **viewer client's** clipboard tool, with no trailing newline |
+| `NN-<action>.host-clipboard` | Bytes sent to a clipboard tool on the **server's** machine. Should never exist; its presence means the copy bypassed the viewer |
 | `NN-<action>.opened-urls` | The arguments passed to the URL launcher, one per line |
 | `NN-<action>.result.txt` | Summary: clipboard, opened URLs, and the focused pane afterwards |
 | `plugin-link.json` | The private registry linked this checkout |
@@ -97,9 +101,10 @@ Proof standards:
 - Drive through `herdr plugin action invoke` only, which is what `$V invoke` does. Running `bin/herdr-pluck pick …` directly skips layout, context, config discovery, and cleanup.
 - Capture both the hinted picker screen and the resulting side effect. A hint on screen doesn't prove it copies the right text, and a clipboard value doesn't prove the user could see the hint.
 - A missing `.clipboard` file means nothing was copied. That's the proof for cancel and for open-url.
+- `host clipboard: <untouched>` in `result.txt` proves the copy went to the viewer, not the server's machine. That's the property that makes copying work over `herdr --remote`; the private viewer is local, but Herdr routes the write the same way.
 - Assert that focus returned (`focused:` in `result.txt`) and that no picker tab is left (`doctor`).
 - `plugin-log.json` covers only the short-lived `open` launcher, which exits 0 as soon as the picker tab exists. It says nothing about the selection. The captures are the proof.
-- The shims replace the system tools at a process boundary the plugin already isolates (`src/clipboard/system.rs`, `src/url_opener/system.rs`). The arguments each platform tool receives (for example `wl-copy --type text/plain;charset=utf-8`) are covered by unit tests, not by this skill.
+- The shims replace the system tools at process boundaries: Herdr's client clipboard writer for copies, and the plugin's URL launcher (`src/url_opener/system.rs`) for opens. The OSC 52 bytes the plugin emits (`src/clipboard/osc52.rs`) are covered by unit tests.
 
 ## Cleanup
 
@@ -107,16 +112,18 @@ Proof standards:
 $V down
 ```
 
-`down` saves the plugin log and server logs, stops the private server, signals only the PID this run started, deletes the private `/tmp/hp.*` home, and removes the run's shims, captures, and fixture project. It keeps `evidence/` and lists it. Run `down` after a failed attempt too, so broken runs don't strand servers. If `up` refuses because a run is still active, `down` that run first.
+`down` saves the plugin log and server logs, stops the private server and viewer client, signals only the PIDs this run started, deletes the private `/tmp/hp.*` home, and removes the run's shims, captures, and fixture project. It keeps `evidence/` and lists it. Run `down` after a failed attempt too, so broken runs don't strand servers. If `up` refuses because a run is still active, `down` that run first.
 
 Never run `herdr server stop` or `herdr session stop` yourself, never kill Herdr by process name, and never touch the user's real `~/.config/herdr`. Don't run `herdr plugin link` or edit `herdr plugin config-dir` outside the helper. Those operate on the user's real registry and config.
 
 ## Helpers
 
-- `scripts/pluck-verify` is the only helper. It is executable. Run `$V --help` for the subcommand list.
+- `scripts/pluck-verify` is the only helper you run. It is executable. Run `$V --help` for the subcommand list.
+- `scripts/attach-viewer.py` runs the viewer client on a PTY. `up` starts it; don't run it yourself.
 - `fixtures/tokens.txt` holds every built-in token type, a duplicate path, and a URL with a trailing period.
 - `fixtures/many.txt` holds 30 unique IPs, which forces two-letter hints.
 - `fixtures/no-urls.txt` holds tokens but no URLs, for the open-url empty state.
 - `fixtures/custom-patterns.txt` holds text matched only by the custom patterns.
 - `fixtures/global-config.toml` is the private global config: `global-ticket`, `global-prec`, and `build-id`.
+- `fixtures/global-config-system-clipboard.toml` sets `clipboard = "system"` and nothing else.
 - `fixtures/project-config.toml` is the project-local config: `ticket`, `trace-id` (with a `match` capture), and `project-prec`.
