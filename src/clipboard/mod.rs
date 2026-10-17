@@ -6,7 +6,7 @@ mod system;
 mod tool;
 
 pub use error::ClipboardError;
-pub use osc52::{Osc52Clipboard, Osc52Terminal, StdoutTerminal};
+use osc52::{Osc52Clipboard, StdoutTerminal};
 
 use crate::model::ClipboardBackend;
 use detect::select_tool;
@@ -27,7 +27,7 @@ pub trait Clipboard {
 
 /// Production clipboard for the configured [`ClipboardBackend`].
 #[derive(Debug, Clone, Copy)]
-pub enum ConfiguredClipboard {
+pub(crate) enum ConfiguredClipboard {
     Osc52(Osc52Clipboard),
     System(SystemClipboard),
 }
@@ -61,11 +61,6 @@ impl Clipboard for SystemClipboard {
     fn copy(&self, text: &str) -> Result<CopySuccess, ClipboardError> {
         copy_with_runner(text, &SystemCommandRunner, ClipboardEnvironment::current())
     }
-}
-
-/// Copies text to the system clipboard with the default fallback adapter.
-pub fn copy_to_system_clipboard(text: &str) -> Result<CopySuccess, ClipboardError> {
-    SystemClipboard.copy(text)
 }
 
 fn copy_with_runner(

@@ -6,7 +6,7 @@ Pluck copies through one of two backends, chosen by `clipboard` in the global pl
 
 - `clip-osc52-default` copies to the viewing client's clipboard when `clipboard` is unset, and never touches the server machine's clipboard.
 - `clip-system` copies with the server machine's clipboard tools when `clipboard = "system"`, and the viewer's clipboard is untouched.
-- `clip-invalid` treats an unknown `clipboard` value as a broken config: it logs `failed to load config, using defaults` and copies with `osc52`.
+- `clip-invalid` treats an unknown `clipboard` value, or a `clipboard` key misplaced under a table header, as a broken config: it logs `failed to load config, using defaults` and copies with `osc52`.
 
 ## How to get to it (user POV)
 
@@ -29,3 +29,4 @@ Preconditions:
 - `global-config-system-clipboard.toml` has no custom patterns. Run [custom-patterns](./custom-patterns.md) journeys only with `global-config.toml` installed.
 - Doctor compares the installed config against the last fixture passed to `global-config`, not always `global-config.toml`.
 - An invalid config drops custom patterns too, not just the clipboard setting, because the whole file fails to parse.
+- A `clipboard` key placed after a `[[patterns]]` header belongs to that pattern in TOML. It is rejected as ``unknown field `clipboard` ``, which also takes the fallback path, so put top-level keys first in scratch configs.

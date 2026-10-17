@@ -11,12 +11,12 @@ const TOOL_NAME: &str = "osc52";
 /// client the user is viewing from, which writes to that machine's clipboard. Copies
 /// therefore land on the viewer's machine even when the picker runs on a remote server.
 #[derive(Debug, Clone, Copy)]
-pub struct Osc52Clipboard<T = StdoutTerminal> {
+pub(crate) struct Osc52Clipboard<T = StdoutTerminal> {
     terminal: T,
 }
 
 impl<T: Osc52Terminal> Osc52Clipboard<T> {
-    pub fn new(terminal: T) -> Self {
+    pub(crate) fn new(terminal: T) -> Self {
         Self { terminal }
     }
 }
@@ -36,13 +36,13 @@ impl<T: Osc52Terminal> Clipboard for Osc52Clipboard<T> {
 }
 
 /// Injectable terminal boundary that receives OSC 52 sequences.
-pub trait Osc52Terminal {
+pub(crate) trait Osc52Terminal {
     fn write_sequence(&self, sequence: &[u8]) -> io::Result<()>;
 }
 
 /// Writes OSC 52 sequences to the process stdout, which is the picker pane's PTY.
 #[derive(Debug, Default, Clone, Copy)]
-pub struct StdoutTerminal;
+pub(crate) struct StdoutTerminal;
 
 impl Osc52Terminal for StdoutTerminal {
     fn write_sequence(&self, sequence: &[u8]) -> io::Result<()> {

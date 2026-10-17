@@ -13,7 +13,11 @@ const DEFAULT_PROJECT_CONFIG_FILE: &str = ".herdr-pluck.toml";
 /// User-editable global Herdr Pluck configuration file.
 ///
 /// Project-local files share this shape, but only their `patterns` are used.
+///
+/// Unknown fields are rejected so typos and keys misplaced under a table header (for
+/// example `clipboard` after `[[patterns]]`) fail loudly instead of being ignored.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct GlobalConfigFile {
     #[serde(default)]
     clipboard: ClipboardBackend,
@@ -25,6 +29,7 @@ struct GlobalConfigFile {
 
 /// Project-local pattern discovery settings from global config.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct ProjectConfig {
     #[serde(default = "default_project_patterns_enabled")]
     patterns: bool,
@@ -43,6 +48,7 @@ impl Default for ProjectConfig {
 
 /// One custom regex pattern loaded from user or project configuration.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct PatternConfigEntry {
     name: String,
     regex: String,
@@ -254,6 +260,26 @@ regex = "ABC-[0-9]+"
         let error = toml::from_str::<GlobalConfigFile>(r#"clipboard = "pbcopy""#).unwrap_err();
 
         assert!(error.to_string().contains("unknown variant `pbcopy`"));
+    }
+
+    #[test]
+    fn clipboard_under_a_pattern_header_is_rejected() {
+        let error = toml::from_str::<GlobalConfigFile>(
+            r#"[[patterns]]
+name = "ticket"
+regex = "ABC-[0-9]+"
+clipboard = "system"
+"#,
+        )
+        .unwrap_err();
+
+        assert!(error.to_string().contains("unknown field `clipboard`"));
+    }
+
+    #[test]
+    fn unknown_top_level_and_project_keys_are_rejected() {
+        assert!(toml::from_str::<GlobalConfigFile>("clipbaord = \"system\"").is_err());
+        assert!(toml::from_str::<GlobalConfigFile>("[project]\npaterns = false").is_err());
     }
 
     #[test]
